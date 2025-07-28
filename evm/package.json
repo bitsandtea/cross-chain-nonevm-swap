@@ -1,6 +1,7 @@
 {
   "name": "hardhat-project",
   "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.1.0",
     "@nomicfoundation/hardhat-ignition": "^0.15.13",
     "@nomicfoundation/hardhat-ignition-viem": "^0.15.13",
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
@@ -13,6 +14,7 @@
     "@types/chai-as-promised": "^7.1.8",
     "@types/mocha": "^10.0.10",
     "dotenv": "^17.2.1",
+    "ethers": "^6.15.0",
     "hardhat": "^2.26.1",
     "hardhat-gas-reporter": "^2.3.0",
     "solidity-coverage": "^0.8.16",
@@ -23,7 +25,6 @@
   "dependencies": {
     "@1inch/limit-order-protocol-contract": "^4.3.2",
     "@1inch/limit-order-settlement": "^3.1.0",
-    "@1inch/solidity-utils": "^6.6.0",
-    "ethers": "^6.15.0"
+    "@1inch/solidity-utils": "^6.6.0"
   }
 }

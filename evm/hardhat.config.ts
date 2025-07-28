@@ -1,5 +1,9 @@
+import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-toolbox-viem";
 import type { HardhatUserConfig } from "hardhat/config";
+
+// Import token utility tasks
+import "./scripts/token-utils";
 
 const config: HardhatUserConfig = {
   solidity: {
