@@ -1,0 +1,26 @@
+{
+  "intents": [
+    {
+      "id": "baf9e4d0-7099-4448-87b7-04bb499ed8fe",
+      "userAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "sellToken": "0x3aa5ebb10dc797cac828524e59a333d0a371443c",
+      "buyToken": "0x43417434fd869edee76cca2a4d2301e528a1551b1d719b75c350c3c97d15b8b9::coins::USDC",
+      "amountIn": "1000000",
+      "minAmountOut": "1000000000000000000",
+      "chainIn": 1,
+      "chainOut": 1000,
+      "expiration": 1753733516,
+      "maxSlippage": 100,
+      "feeCap": "10000000000000000",
+      "nonce": 1,
+      "signature": "0x996bcf172180306e1c4704011d69ddb0e3ec7743648ec8446a1970e0c5e2bf0731ed34fc770726e37fcb8bb38164583c2aeed80ebdaa01d4df76c2a03b5287b31c",
+      "status": "cancelled",
+      "createdAt": 1753729918863,
+      "updatedAt": 1753730725745
+    }
+  ],
+  "whitelist": [],
+  "nonces": {
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266": 1
+  }
+}

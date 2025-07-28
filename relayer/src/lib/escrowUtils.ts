@@ -406,7 +406,7 @@ export function getConfigFromEnv(): ListenerConfig {
   return {
     rpcUrl: process.env.RPC_URL || "http://127.0.0.1:8545", // Default to hardhat
     factoryAddress:
-      process.env.NEXT_PUBLIC_ESCROW_FACTORY_ADDRESS ||
+      process.env.NEXT_PUBLIC_ETH_FACTORY_ADDRESS ||
       "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853", // Hardhat deployed address
     chainId: parseInt(process.env.CHAIN_ID || "31337"), // Hardhat chain ID
     startBlock: parseInt(process.env.START_BLOCK || "0"),
