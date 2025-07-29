@@ -1,10 +1,10 @@
 [package]
-name = "my_first_module"
+name = "dai_coin_standalone"
 version = "1.0.0"
 authors = []
 
 [addresses]
-my_first_module = "0x42"
+dai_coin_standalone = "0x42"
 
 [dev-addresses]
 
@@ -13,4 +13,4 @@ git = "https://github.com/aptos-labs/aptos-framework.git"
 rev = "testnet"
 subdir = "aptos-framework"
 
-[dev-dependencies]
+[dev-dependencies] 
