@@ -4,12 +4,13 @@ version = "1.0.0"
 authors = []
 
 [addresses]
+my_first_module = "0x42"
 
 [dev-addresses]
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"
-rev = "mainnet"
+rev = "testnet"
 subdir = "aptos-framework"
 
 [dev-dependencies]
