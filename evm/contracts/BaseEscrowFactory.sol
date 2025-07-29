@@ -5,6 +5,7 @@ pragma solidity 0.8.23;
 import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Create2 } from "@openzeppelin/contracts/utils/Create2.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { Address, AddressLib } from "@1inch/solidity-utils/contracts/libraries/AddressLib.sol";
 import { SafeERC20 } from "@1inch/solidity-utils/contracts/libraries/SafeERC20.sol";
 
@@ -26,7 +27,7 @@ import { MerkleStorageInvalidator } from "./MerkleStorageInvalidator.sol";
  * @dev Immutable variables must be set in the constructor of the derived contracts.
  * @custom:security-contact security@1inch.io
  */
-abstract contract BaseEscrowFactory is IEscrowFactory, ResolverValidationExtension, MerkleStorageInvalidator {
+abstract contract BaseEscrowFactory is IEscrowFactory, ResolverValidationExtension, MerkleStorageInvalidator, ReentrancyGuard {
     using AddressLib for Address;
     using Clones for address;
     using ImmutablesLib for IBaseEscrow.Immutables;
@@ -39,6 +40,11 @@ abstract contract BaseEscrowFactory is IEscrowFactory, ResolverValidationExtensi
     address public immutable ESCROW_DST_IMPLEMENTATION;
     bytes32 internal immutable _PROXY_SRC_BYTECODE_HASH;
     bytes32 internal immutable _PROXY_DST_BYTECODE_HASH;
+
+    /// @notice Returns the Limit Order Protocol address
+    function LIMIT_ORDER_PROTOCOL() public view returns (address) {
+        return _LIMIT_ORDER_PROTOCOL;
+    }
 
     /**
      * @notice Creates a new escrow contract for maker on the source chain.
@@ -138,6 +144,23 @@ abstract contract BaseEscrowFactory is IEscrowFactory, ResolverValidationExtensi
         }
 
         emit DstEscrowCreated(escrow, dstImmutables.hashlock, dstImmutables.taker);
+    }
+
+    /**
+     * @notice See {IEscrowFactory-createSrcEscrow}.
+     */
+    function createSrcEscrow(bytes calldata immutables) external nonReentrant {
+        // Only LOP should be able to call this function
+        if (msg.sender != _LIMIT_ORDER_PROTOCOL) revert InvalidCaller();
+        
+        // Decode the immutables
+        IBaseEscrow.Immutables memory srcImmutables = abi.decode(immutables, (IBaseEscrow.Immutables));
+        
+        // Deploy the escrow
+        bytes32 salt = srcImmutables.hashMem();
+        address escrow = _deployEscrow(salt, 0, ESCROW_SRC_IMPLEMENTATION);
+        
+        emit EscrowCreatedSrc(srcImmutables.orderHash, escrow, immutables);
     }
 
     /**

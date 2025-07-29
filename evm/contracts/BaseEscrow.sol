@@ -66,6 +66,14 @@ abstract contract BaseEscrow is IBaseEscrow {
     }
 
     /**
+     * @notice LOP callback function to satisfy static-call checks.
+     * @return The magic value 0x150b7a02 required by LOP.
+     */
+    function lopCallback() external pure returns (bytes4) {
+        return 0x150b7a02;
+    }
+
+    /**
      * @notice See {IBaseEscrow-rescueFunds}.
      */
     function rescueFunds(address token, uint256 amount, Immutables calldata immutables)
