@@ -11,7 +11,22 @@ export const db = new Low(adapter, {
 });
 
 export async function initializeDatabase() {
-  await db.read();
+  try {
+    await db.read();
+  } catch (error) {
+    // Handle empty or corrupted database file
+    console.warn(
+      "Database read failed during initialization, creating new database:",
+      error
+    );
+    db.data = {
+      intents: [],
+      whitelist: [],
+      nonces: {},
+    };
+    await db.write();
+    return;
+  }
 
   // Initialize with default data if empty
   if (!db.data) {
@@ -20,9 +35,8 @@ export async function initializeDatabase() {
       whitelist: [],
       nonces: {},
     };
+    await db.write();
   }
-
-  await db.write();
 }
 
 export function isTokenWhitelisted(
@@ -31,8 +45,14 @@ export function isTokenWhitelisted(
 ): boolean {
   const chainName = chainId === 1 ? "ethereum" : "aptos";
   const whitelist = getWhitelistConfig();
-  const tokens = (whitelist.tokens as any)[chainName] || [];
+  const tokens =
+    (whitelist.tokens as Record<string, string[]>)[chainName] || [];
   return tokens.includes(tokenAddress);
+}
+
+export function isResolverWhitelisted(resolverAddress: string): boolean {
+  const whitelist = getWhitelistConfig();
+  return whitelist.resolvers.includes(resolverAddress.toLowerCase());
 }
 
 export function getUserNonce(userAddress: string): number {

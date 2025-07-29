@@ -1,0 +1,94 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CHAIN_CONFIGS = void 0;
+exports.loadResolverConfig = loadResolverConfig;
+exports.validatePrivateKey = validatePrivateKey;
+exports.getChainConfig = getChainConfig;
+const dotenv_1 = require("dotenv");
+// Load environment variables
+(0, dotenv_1.config)();
+/**
+ * Load resolver configuration from environment variables
+ */
+function loadResolverConfig() {
+    const requiredEnvVars = [
+        "RESOLVER_EVM_PRIVATE_KEY",
+        "RESOLVER_APTOS_PRIVATE_KEY",
+        "EVM_RPC_URL",
+        "APTOS_RPC_URL",
+        "ONEINCH_API_KEY",
+        "RELAYER_API_URL",
+    ];
+    // Check for required environment variables
+    const missing = requiredEnvVars.filter((env) => !process.env[env]);
+    if (missing.length > 0) {
+        throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+    }
+    return {
+        // Private keys
+        evmPrivateKey: process.env.RESOLVER_EVM_PRIVATE_KEY,
+        aptosPrivateKey: process.env.RESOLVER_APTOS_PRIVATE_KEY,
+        // Network RPC endpoints
+        evmRpcUrl: process.env.EVM_RPC_URL,
+        aptosRpcUrl: process.env.APTOS_RPC_URL,
+        // Liquidity thresholds
+        minEvmBalance: process.env.MIN_EVM_BALANCE || "0.1",
+        minAptosBalance: process.env.MIN_APTOS_BALANCE || "1.0",
+        minProfitThreshold: process.env.MIN_PROFIT_THRESHOLD || "0.001",
+        // 1inch API configuration
+        oneInchApiKey: process.env.ONEINCH_API_KEY,
+        oneInchApiUrl: process.env.ONEINCH_API_URL || "https://api.1inch.io/v5.0",
+        // Gas estimation
+        gasBuffer: parseFloat(process.env.GAS_BUFFER_MULTIPLIER || "1.2"),
+        maxGasPriceGwei: parseInt(process.env.MAX_GAS_PRICE_GWEI || "100"),
+        // Relayer API
+        relayerApiUrl: process.env.RELAYER_API_URL,
+        // Monitoring
+        pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || "5000"),
+        maxConcurrentOrders: parseInt(process.env.MAX_CONCURRENT_ORDERS || "10"),
+        healthCheckIntervalMs: parseInt(process.env.HEALTH_CHECK_INTERVAL_MS || "30000"),
+    };
+}
+/**
+ * Validate private key format
+ */
+function validatePrivateKey(key, type) {
+    if (type === "evm") {
+        return /^0x[a-fA-F0-9]{64}$/.test(key);
+    }
+    else {
+        return /^[a-fA-F0-9]{64}$/.test(key);
+    }
+}
+/**
+ * Chain configurations
+ */
+exports.CHAIN_CONFIGS = {
+    1: {
+        chainId: 1,
+        name: "Ethereum",
+        rpcUrl: process.env.EVM_RPC_URL || "",
+        escrowFactoryAddress: "0x0000000000000000000000000000000000000000", // TODO: Update with actual address
+        nativeTokenSymbol: "ETH",
+        blockTime: 12,
+    },
+    1000: {
+        chainId: 1000,
+        name: "Aptos",
+        rpcUrl: process.env.APTOS_RPC_URL || "",
+        escrowFactoryAddress: "0x0000000000000000000000000000000000000000", // TODO: Update with actual address
+        nativeTokenSymbol: "APT",
+        blockTime: 1,
+    },
+};
+/**
+ * Get chain configuration by ID
+ */
+function getChainConfig(chainId) {
+    const config = exports.CHAIN_CONFIGS[chainId];
+    if (!config) {
+        throw new Error(`Unsupported chain ID: ${chainId}`);
+    }
+    return config;
+}
+//# sourceMappingURL=index.js.map

@@ -212,7 +212,7 @@ export async function processDstEscrowCreatedEvent(
 ): Promise<EscrowEvent> {
   try {
     const provider = new ethers.JsonRpcProvider(
-      process.env.RPC_URL || "http://127.0.0.1:8545"
+      process.env.NEXT_PUBLIC_RPC_URL || "http://127.0.0.1:8545"
     );
     const db = await getDatabase();
 
@@ -404,7 +404,7 @@ export async function saveEvent(event: EscrowEvent): Promise<void> {
 
 export function getConfigFromEnv(): ListenerConfig {
   return {
-    rpcUrl: process.env.RPC_URL || "http://127.0.0.1:8545", // Default to hardhat
+    rpcUrl: process.env.NEXT_PUBLIC_RPC_URL || "http://127.0.0.1:8545", // Default to hardhat
     factoryAddress:
       process.env.NEXT_PUBLIC_ETH_FACTORY_ADDRESS ||
       "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853", // Hardhat deployed address

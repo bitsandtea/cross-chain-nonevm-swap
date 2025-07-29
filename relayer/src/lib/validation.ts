@@ -1,7 +1,8 @@
 import { ethers } from "ethers";
 import { getUserNonce, isTokenWhitelisted } from "./database";
+import { validateEscrowTargets, validateTimelockSequence } from "./flowUtils";
 import { getTokenInfo as getStaticTokenInfo } from "./tokenMapping";
-import { CANCEL_TYPE, Intent, INTENT_TYPE } from "./types";
+import { CANCEL_TYPE, FUSION_ORDER_TYPE, FusionPlusOrder } from "./types";
 
 const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
@@ -11,7 +12,7 @@ const ERC20_ABI = [
   "function name() view returns (string)",
 ];
 
-// Address validation utilities (duplicated here to avoid circular imports)
+// Address validation utilities
 function isEVMAddress(address: string): boolean {
   return ethers.isAddress(address);
 }
@@ -69,7 +70,7 @@ async function getServerTokenInfo(tokenAddress: string): Promise<TokenInfo> {
       throw new Error("Invalid EVM token address");
     }
 
-    const rpcUrl = process.env.RPC_URL || "http://localhost:8545";
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const tokenContract = new ethers.Contract(
       tokenAddress,
@@ -106,41 +107,22 @@ async function getServerTokenInfo(tokenAddress: string): Promise<TokenInfo> {
   }
 }
 
-function isValidTokenAddress(address: string): boolean {
-  try {
-    // Check if it's a valid EVM address
-    if (isEVMAddress(address)) {
-      return true;
-    }
-
-    // Check if it's a valid non-EVM address
-    if (isNonEVMAddress(address)) {
-      return true;
-    }
-
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-// Legacy function for backward compatibility
-function isValidEthereumAddress(address: string): boolean {
-  return isEVMAddress(address);
-}
-
-// Get current chain ID from environment or default to localhost
-function getCurrentChainId(): number {
-  const chainId =
-    process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || "31337";
-  return parseInt(chainId);
-}
-
 // Create dynamic domain for signature verification
-function createDomain(chainId?: number): any {
+function createDomain(chainId?: number): {
+  name: string;
+  version: string;
+  chainId: number;
+  verifyingContract: string;
+} {
+  const getCurrentChainId = () => {
+    const chainId =
+      process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || "31337";
+    return parseInt(chainId);
+  };
+
   const actualChainId = chainId || getCurrentChainId();
   return {
-    name: "CrossChainIntentPool",
+    name: "CrossChainFusionPlus",
     version: "1",
     chainId: actualChainId,
     verifyingContract:
@@ -150,17 +132,26 @@ function createDomain(chainId?: number): any {
   };
 }
 
-export async function verifyIntentSignature(
-  intent: Omit<
-    Intent,
-    "id" | "userAddress" | "signature" | "status" | "createdAt" | "updatedAt"
-  >,
+export async function verifyFusionOrderSignature(
+  fusionOrder: FusionPlusOrder,
+  nonce: number,
   signature: string,
   chainId?: number
 ): Promise<string> {
   const domain = createDomain(chainId);
-  console.log("Verifying intent signature with domain:", domain);
-  const digest = ethers.TypedDataEncoder.hash(domain, INTENT_TYPE, intent);
+  console.log("Verifying Fusion+ order signature with domain:", domain);
+
+  // Create the message object for signing
+  const message = {
+    ...fusionOrder,
+    nonce,
+  };
+
+  const digest = ethers.TypedDataEncoder.hash(
+    domain,
+    FUSION_ORDER_TYPE,
+    message
+  );
   const recoveredAddress = ethers.recoverAddress(digest, signature);
   console.log("Recovered address:", recoveredAddress);
   return recoveredAddress;
@@ -186,7 +177,7 @@ export async function validateEVMBalance(
   factoryAddress: string
 ): Promise<boolean> {
   try {
-    const rpcUrl = process.env.RPC_URL || "http://localhost:8545";
+    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     console.log("rpcUrl", rpcUrl);
 
@@ -264,75 +255,186 @@ export async function validateAptosBalance(
   }
 }
 
-export function validateIntentData(intent: any): {
+/**
+ * Validate FusionPlusOrder structure and fields
+ */
+export function validateFusionPlusOrder(fusionOrder: FusionPlusOrder): {
   valid: boolean;
   error?: string;
 } {
-  // Check required fields
-  const required = [
-    "sellToken",
-    "buyToken",
-    "amountIn",
-    "minAmountOut",
-    "chainIn",
-    "chainOut",
+  // Validate required core fields
+  const requiredFields: (keyof FusionPlusOrder)[] = [
+    "makerAsset",
+    "takerAsset",
+    "makingAmount",
+    "takingAmount",
+    "maker",
+    "srcChain",
+    "dstChain",
+    "auctionStartTime",
+    "auctionDuration",
+    "startRate",
+    "endRate",
+    "secretHash",
+    "srcEscrowTarget",
+    "dstEscrowTarget",
+    "srcTimelock",
+    "dstTimelock",
+    "finalityLock",
+    "srcSafetyDeposit",
+    "dstSafetyDeposit",
+    "fillThresholds",
+    "salt",
     "expiration",
-    "maxSlippage",
-    "feeCap",
-    "nonce",
   ];
-  for (const field of required) {
-    if (!intent[field]) {
+
+  for (const field of requiredFields) {
+    if (fusionOrder[field] === undefined || fusionOrder[field] === null) {
       return { valid: false, error: `Missing required field: ${field}` };
     }
   }
 
-  // Validate chains are different
-  if (intent.chainIn === intent.chainOut) {
+  // Validate address formats
+  if (!ethers.isAddress(fusionOrder.maker)) {
+    return { valid: false, error: "Invalid maker address format" };
+  }
+
+  // Validate chain compatibility
+  if (fusionOrder.srcChain === fusionOrder.dstChain) {
     return {
       valid: false,
       error: "Source and destination chains must be different",
     };
   }
 
-  // Validate expiration is in future
-  if (intent.expiration <= Date.now() / 1000) {
-    return { valid: false, error: "Expiration must be in the future" };
+  // Validate amounts are positive
+  try {
+    const makingAmount = BigInt(fusionOrder.makingAmount);
+    const takingAmount = BigInt(fusionOrder.takingAmount);
+    const srcSafetyDeposit = BigInt(fusionOrder.srcSafetyDeposit);
+    const dstSafetyDeposit = BigInt(fusionOrder.dstSafetyDeposit);
+
+    if (makingAmount <= BigInt(0)) {
+      return { valid: false, error: "Making amount must be positive" };
+    }
+    if (takingAmount <= BigInt(0)) {
+      return { valid: false, error: "Taking amount must be positive" };
+    }
+    if (srcSafetyDeposit < BigInt(0)) {
+      return {
+        valid: false,
+        error: "Source safety deposit cannot be negative",
+      };
+    }
+    if (dstSafetyDeposit < BigInt(0)) {
+      return {
+        valid: false,
+        error: "Destination safety deposit cannot be negative",
+      };
+    }
+  } catch (error) {
+    return { valid: false, error: "Invalid numeric amounts in order" };
   }
 
-  // Validate minimum expiration time (5 minutes)
-  if (intent.expiration < Date.now() / 1000 + 300) {
+  // Validate secret hash format (should be 32 bytes hex)
+  if (
+    !fusionOrder.secretHash.startsWith("0x") ||
+    fusionOrder.secretHash.length !== 66
+  ) {
     return {
       valid: false,
-      error: "Expiration must be at least 5 minutes in the future",
+      error: "Invalid secret hash format (must be 32 bytes hex)",
     };
   }
 
-  // Validate tokens are whitelisted
-  if (!isTokenWhitelisted(intent.sellToken, intent.chainIn)) {
-    return { valid: false, error: "Sell token is not whitelisted" };
+  // Validate salt format (should be 32 bytes hex)
+  if (!fusionOrder.salt.startsWith("0x") || fusionOrder.salt.length !== 66) {
+    return {
+      valid: false,
+      error: "Invalid salt format (must be 32 bytes hex)",
+    };
   }
 
-  if (!isTokenWhitelisted(intent.buyToken, intent.chainOut)) {
-    return { valid: false, error: "Buy token is not whitelisted" };
+  // Validate timelock sequence
+  const timelockValidation = validateTimelockSequence(fusionOrder);
+  if (!timelockValidation.valid) {
+    return timelockValidation;
   }
 
-  // Validate token address formats based on chain
-  if (intent.chainIn === 1 && !isEVMAddress(intent.sellToken)) {
-    return { valid: false, error: "Invalid Ethereum sell token address" };
+  // Validate escrow targets
+  const escrowValidation = validateEscrowTargets(fusionOrder);
+  if (!escrowValidation.valid) {
+    return escrowValidation;
   }
 
-  if (intent.chainOut === 1 && !isEVMAddress(intent.buyToken)) {
-    return { valid: false, error: "Invalid Ethereum buy token address" };
+  // Validate auction parameters
+  if (fusionOrder.auctionDuration <= 0) {
+    return { valid: false, error: "Auction duration must be positive" };
   }
 
-  // Validate Aptos token addresses (chain 1000)
-  if (intent.chainIn === 1000 && !isNonEVMAddress(intent.sellToken)) {
-    return { valid: false, error: "Invalid Aptos sell token address" };
+  if (fusionOrder.auctionStartTime <= 0) {
+    return { valid: false, error: "Invalid auction start time" };
   }
 
-  if (intent.chainOut === 1000 && !isNonEVMAddress(intent.buyToken)) {
-    return { valid: false, error: "Invalid Aptos buy token address" };
+  // Validate Dutch auction rates if specified
+  if (fusionOrder.startRate !== "0" && fusionOrder.endRate !== "0") {
+    const startRate = parseFloat(fusionOrder.startRate);
+    const endRate = parseFloat(fusionOrder.endRate);
+
+    if (isNaN(startRate) || startRate <= 0) {
+      return { valid: false, error: "Start rate must be a positive number" };
+    }
+    if (isNaN(endRate) || endRate <= 0) {
+      return { valid: false, error: "End rate must be a positive number" };
+    }
+    if (startRate <= endRate) {
+      return {
+        valid: false,
+        error: "Start rate must be greater than end rate for price decay",
+      };
+    }
+  }
+
+  // Validate fill thresholds
+  if (
+    !Array.isArray(fusionOrder.fillThresholds) ||
+    fusionOrder.fillThresholds.length === 0
+  ) {
+    return { valid: false, error: "Fill thresholds must be a non-empty array" };
+  }
+
+  for (const threshold of fusionOrder.fillThresholds) {
+    if (typeof threshold !== "number" || threshold <= 0 || threshold > 100) {
+      return {
+        valid: false,
+        error: "Fill thresholds must be numbers between 1 and 100",
+      };
+    }
+  }
+
+  // Ensure thresholds are sorted and include 100%
+  const sortedThresholds = [...fusionOrder.fillThresholds].sort(
+    (a, b) => a - b
+  );
+  if (sortedThresholds[sortedThresholds.length - 1] !== 100) {
+    return {
+      valid: false,
+      error: "Fill thresholds must include 100% completion",
+    };
+  }
+
+  // Validate expiration is in future
+  if (fusionOrder.expiration <= Math.floor(Date.now() / 1000)) {
+    return { valid: false, error: "Expiration must be in the future" };
+  }
+
+  // Validate that tokens are whitelisted
+  if (!isTokenWhitelisted(fusionOrder.makerAsset, fusionOrder.srcChain)) {
+    return { valid: false, error: "Maker asset is not whitelisted" };
+  }
+
+  if (!isTokenWhitelisted(fusionOrder.takerAsset, fusionOrder.dstChain)) {
+    return { valid: false, error: "Taker asset is not whitelisted" };
   }
 
   return { valid: true };
@@ -341,4 +443,50 @@ export function validateIntentData(intent: any): {
 export function validateNonce(userAddress: string, nonce: number): boolean {
   const expectedNonce = getUserNonce(userAddress) + 1;
   return nonce === expectedNonce;
+}
+
+/**
+ * Simple resolver authentication using API keys
+ */
+export function verifyResolverAuthentication(req: Request): {
+  valid: boolean;
+  resolverName?: string;
+  resolverAddress?: string;
+  error?: string;
+} {
+  try {
+    const authHeader = req.headers.get("authorization");
+
+    if (!authHeader?.startsWith("Bearer ")) {
+      return {
+        valid: false,
+        error:
+          "Missing or invalid Authorization header. Use 'Bearer <api_key>'",
+      };
+    }
+
+    const apiKey = authHeader.substring(7);
+    const { validateResolverApiKey } = require("./resolverAuth");
+    const result = validateResolverApiKey(apiKey);
+
+    if (!result.valid) {
+      return {
+        valid: false,
+        error: result.error,
+      };
+    }
+
+    return {
+      valid: true,
+      resolverName: result.resolver?.name,
+      resolverAddress: result.resolver?.address,
+    };
+  } catch (error) {
+    return {
+      valid: false,
+      error: `Authentication error: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+    };
+  }
 }

@@ -36,7 +36,10 @@ export interface QuoteResponse {
     name: string;
     decimals: number;
   };
-  protocols: Array<any>;
+  protocols: Array<{
+    name: string;
+    [key: string]: unknown;
+  }>;
 }
 
 // Mock prices for fallback when API is unavailable

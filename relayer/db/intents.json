@@ -1,26 +1,85 @@
 {
   "intents": [
     {
-      "id": "baf9e4d0-7099-4448-87b7-04bb499ed8fe",
-      "userAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      "sellToken": "0x3aa5ebb10dc797cac828524e59a333d0a371443c",
-      "buyToken": "0x43417434fd869edee76cca2a4d2301e528a1551b1d719b75c350c3c97d15b8b9::coins::USDC",
-      "amountIn": "1000000",
-      "minAmountOut": "1000000000000000000",
-      "chainIn": 1,
-      "chainOut": 1000,
-      "expiration": 1753733516,
-      "maxSlippage": 100,
-      "feeCap": "10000000000000000",
-      "nonce": 1,
-      "signature": "0x996bcf172180306e1c4704011d69ddb0e3ec7743648ec8446a1970e0c5e2bf0731ed34fc770726e37fcb8bb38164583c2aeed80ebdaa01d4df76c2a03b5287b31c",
-      "status": "cancelled",
-      "createdAt": 1753729918863,
-      "updatedAt": 1753730725745
+      "id": "2be7bc0d-1141-4115-824c-84515230458d",
+      "fusionOrder": {
+        "makerAsset": "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512",
+        "takerAsset": "0x43417434fd869edee76cca2a4d2301e528a1551b1d719b75c350c3c97d15b8b9::coins::USDC",
+        "makingAmount": "1000000",
+        "takingAmount": "1000000000000000000",
+        "maker": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "srcChain": 1,
+        "dstChain": 1000,
+        "auctionStartTime": 1753798985,
+        "auctionDuration": 5,
+        "startRate": "1.10",
+        "endRate": "0.95",
+        "secretHash": "0x98f11396ed188f6b6c347f5fd61f153e467672684ac4daed408c67a3575dfd6e",
+        "srcEscrowTarget": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "dstEscrowTarget": "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1",
+        "srcTimelock": 3600,
+        "dstTimelock": 1800,
+        "finalityLock": 300,
+        "srcSafetyDeposit": "10000000000000000",
+        "dstSafetyDeposit": "10000000000000000",
+        "fillThresholds": [
+          25,
+          50,
+          75,
+          100
+        ],
+        "salt": "0x00000000000000000000000000000000000000000000000000000000000000cb",
+        "expiration": 1753806484
+      },
+      "signature": "0x7f134877ff27aad8ab2d5103aefaac769a6918d1e378369fb041c79466afe8b442b67b439fb1fa99b96f7d64fe18a98dd4e08932b2050b189fb6ed27e62fc2931b",
+      "status": "pending",
+      "createdAt": 1753798989501,
+      "updatedAt": 1753798989501,
+      "resolverClaims": [],
+      "nonce": 1
+    },
+    {
+      "id": "dfc339ee-c5ec-4f8c-a270-7759dde3c74b",
+      "fusionOrder": {
+        "makerAsset": "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512",
+        "takerAsset": "0x43417434fd869edee76cca2a4d2301e528a1551b1d719b75c350c3c97d15b8b9::coins::USDC",
+        "makingAmount": "1000000",
+        "takingAmount": "1000000000000000000",
+        "maker": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "srcChain": 1,
+        "dstChain": 1000,
+        "auctionStartTime": 1753799970,
+        "auctionDuration": 5,
+        "startRate": "1.10",
+        "endRate": "0.95",
+        "secretHash": "0x8abda260f5faa4a30d7b5b3212fee5f4d29858489e55e248e69587427d29d35e",
+        "srcEscrowTarget": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "dstEscrowTarget": "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1",
+        "srcTimelock": 3600,
+        "dstTimelock": 1800,
+        "finalityLock": 300,
+        "srcSafetyDeposit": "10000000000000000",
+        "dstSafetyDeposit": "10000000000000000",
+        "fillThresholds": [
+          25,
+          50,
+          75,
+          100
+        ],
+        "secretTree": "0xebe636014e025f7264feb0757581151d6ef46e9e0978b2e3bb90f119b22c9eec",
+        "salt": "0x000000000000000000000000000000000000000000000000000000000000017d",
+        "expiration": 1753807469
+      },
+      "signature": "0x7d3167eb07e7988197c610f19f89b4af8dc134c2238021c4eeed007bd3b488e948f786caf21ed9622359611ee136d30a5b13dc3b8b3788b39da9d96ceae25fc91b",
+      "status": "pending",
+      "createdAt": 1753799972780,
+      "updatedAt": 1753799972780,
+      "resolverClaims": [],
+      "nonce": 1
     }
   ],
   "whitelist": [],
   "nonces": {
-    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266": 1
+    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266": 2
   }
 }

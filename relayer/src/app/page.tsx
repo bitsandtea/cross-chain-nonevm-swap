@@ -1,35 +1,26 @@
 "use client";
 
 import {
-  formatBalance,
-  getMultipleTokenBalances,
-  TokenBalance,
-} from "@/lib/balanceService";
-import {
   FlowStep,
   FormData,
   getDefaultFormData,
   IntentFlowManager,
   validateFormData,
 } from "@/lib/flowUtils";
-import {
-  AllowanceState,
-  formatAllowanceWithDecimals,
-  formatTokenAmountSafe,
-  formatTokenAmountSync,
-} from "@/lib/tokenUtils";
-import { CANCEL_TYPE, Intent } from "@/lib/types";
+import { getAllTokens, TokenMapping } from "@/lib/tokenMapping";
+import { AllowanceState } from "@/lib/tokenUtils";
+import { CANCEL_TYPE, FusionPlusIntent } from "@/lib/types";
 import { ethers } from "ethers";
 import {
-  AlertCircle,
-  ArrowLeftRight,
-  ArrowUp,
+  Activity,
   CheckCircle,
-  Clock,
-  Filter,
-  RefreshCw,
-  TrendingUp,
+  ExternalLink,
+  Loader2,
+  Target,
+  TrendingDown,
   Wallet,
+  WifiOff,
+  X,
   Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -48,148 +39,49 @@ declare global {
   }
 }
 
-const CHAINS = {
-  1: "Ethereum",
-  1000: "Aptos",
-};
+interface UserBalance {
+  [tokenAddress: string]: string; // Raw balance in wei/smallest unit
+}
 
-const TOKENS = {
-  1: [
-    {
-      address:
-        process.env.NEXT_PUBLIC_ONEINCH_TOKEN_ADDRESS ||
-        "0x5fbdb2315678afecb367f032d93f642f64180aa3",
-      symbol: "1INCH",
-      name: "1inch Token",
-    },
-    {
-      address:
-        process.env.NEXT_PUBLIC_USDC_ADDRESS ||
-        "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512",
-      symbol: "USDC",
-      name: "USD Coin",
-    },
-    {
-      address:
-        process.env.NEXT_PUBLIC_AAVE_TOKEN_ADDRESS ||
-        "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
-      symbol: "AAVE",
-      name: "Aave Token",
-    },
-    {
-      address:
-        process.env.NEXT_PUBLIC_WETH_ADDRESS ||
-        "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
-      symbol: "WETH",
-      name: "Wrapped Ether",
-    },
-    {
-      address:
-        process.env.NEXT_PUBLIC_UNI_TOKEN_ADDRESS ||
-        "0xdc64a140aa3e981100a9beca4e685f962f0cf6c9",
-      symbol: "UNI",
-      name: "Uniswap Token",
-    },
-  ],
-  1000: [
-    {
-      address:
-        process.env.NEXT_PUBLIC_APT_ADDRESS || "0x1::aptos_coin::AptosCoin",
-      symbol: "APT",
-      name: "Aptos Coin",
-    },
-    {
-      address:
-        process.env.NEXT_PUBLIC_USDC_APTOS_ADDRESS ||
-        "0x43417434fd869edee76cca2a4d2301e528a1551b1d719b75c350c3c97d15b8b9::coins::USDC",
-      symbol: "USDC",
-      name: "USD Coin",
-    },
-  ],
-};
-
-// Custom hook for formatted token amounts
-const useFormattedTokenAmount = (amount: string, tokenAddress: string) => {
-  const [formattedAmount, setFormattedAmount] = useState<string>("");
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    const formatAmount = async () => {
-      setIsLoading(true);
-      try {
-        // Try sync formatting first for known tokens
-        const syncResult = formatTokenAmountSync(amount, tokenAddress, 4);
-        if (syncResult !== null) {
-          setFormattedAmount(syncResult);
-        } else {
-          // Fallback to async formatting for unknown tokens
-          const asyncResult = await formatTokenAmountSafe(
-            amount,
-            tokenAddress,
-            4
-          );
-          setFormattedAmount(asyncResult);
-        }
-      } catch (error) {
-        console.error("Failed to format token amount:", error);
-        setFormattedAmount("0.0000");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    if (amount && tokenAddress) {
-      formatAmount();
-    } else {
-      setFormattedAmount("0.0000");
-    }
-  }, [amount, tokenAddress]);
-
-  return { formattedAmount, isLoading };
-};
-
-// Token amount display component
-const TokenAmountDisplay = ({
-  amount,
-  tokenAddress,
-  label,
-}: {
-  amount: string;
-  tokenAddress: string;
-  label: string;
-}) => {
-  const { formattedAmount, isLoading } = useFormattedTokenAmount(
-    amount,
-    tokenAddress
-  );
-
-  if (isLoading) {
-    return <span className="text-yellow-400">...</span>;
+// Chain helper functions
+function getChainName(chainId: number): string {
+  switch (chainId) {
+    case 1:
+      return "Ethereum";
+    case 1000:
+      return "Aptos";
+    default:
+      return `Chain ${chainId}`;
   }
+}
 
-  return (
-    <span>
-      {label}: {formattedAmount}
-    </span>
-  );
-};
+function getAddressExample(chainId: number): string {
+  switch (chainId) {
+    case 1:
+      return "0x742d35Cc6527C6f25c8bF3C7bE7Cf1d6b8c5a7D8";
+    case 1000:
+      return "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1";
+    default:
+      return "Your destination address";
+  }
+}
 
-export default function IntentPool() {
-  const [account, setAccount] = useState<string | null>(null);
-  const [intents, setIntents] = useState<Intent[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [tokenPrices, setTokenPrices] = useState<Record<string, string>>({});
-  const [tokenBalances, setTokenBalances] = useState<
-    Record<string, TokenBalance>
-  >({});
-  const [pricesLoading, setPricesLoading] = useState(false);
-  const [balancesLoading, setBalancesLoading] = useState(false);
+export default function Home() {
+  // State management
+  const [account, setAccount] = useState<string>("");
+  const [isConnected, setIsConnected] = useState(false);
+  const [formData, setFormData] = useState<FormData>(getDefaultFormData());
+  const [intents, setIntents] = useState<FusionPlusIntent[]>([]);
+  const [userBalances, setUserBalances] = useState<UserBalance>({});
+  const [tokenPrices, setTokenPrices] = useState<Record<string, number>>({});
+  const [loadingStates, setLoadingStates] = useState({
+    intents: false,
+    balances: false,
+    prices: false,
+  });
+  const [activeTab, setActiveTab] = useState<"create" | "orders">("create");
 
-  // Tab state
-  const [activeTab, setActiveTab] = useState<"compiler" | "pool">("compiler");
-
-  // Flow state
+  // Flow management
   const [currentStep, setCurrentStep] = useState<FlowStep>(FlowStep.FORM);
   const [allowanceState, setAllowanceState] = useState<AllowanceState>({
     currentAllowance: BigInt(0),
@@ -197,10 +89,10 @@ export default function IntentPool() {
     hasEnoughAllowance: false,
     isLoading: false,
   });
-  const [approvalTxHash, setApprovalTxHash] = useState<string>("");
-  const [formData, setFormData] = useState<FormData>(getDefaultFormData());
+  const [approvalTxHash, setApprovalTxHash] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // Initialize flow manager
+  // Flow manager instance
   const flowManager = new IntentFlowManager(
     setCurrentStep,
     setAllowanceState,
@@ -208,44 +100,12 @@ export default function IntentPool() {
     setLoading
   );
 
-  // Load token prices
-  const loadTokenPrices = async () => {
-    setPricesLoading(true);
-    try {
-      const allTokens = [
-        ...TOKENS[1].map((t) => t.address),
-        ...TOKENS[1000].map((t) => t.address),
-      ];
-      const response = await fetch(
-        `/api/prices?tokens=${allTokens.join(",")}&action=prices`
-      );
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
-      const data = await response.json();
-      setTokenPrices(data.prices || {});
-    } catch (error) {
-      console.error("Failed to load token prices:", error);
-      setTokenPrices({});
-    } finally {
-      setPricesLoading(false);
-    }
-  };
-
-  // Load user balances
-  const loadUserBalances = async (userAddress: string) => {
-    setBalancesLoading(true);
-    try {
-      const tokenAddresses = TOKENS[1].map((t) => t.address);
-      const balances = await getMultipleTokenBalances(
-        userAddress,
-        tokenAddresses
-      );
-      setTokenBalances(balances);
-    } catch (error) {
-      console.error("Failed to load token balances:", error);
-    } finally {
-      setBalancesLoading(false);
-    }
-  };
+  // Available tokens with chain information
+  const availableTokens = getAllTokens().map((token: TokenMapping) => ({
+    ...token,
+    address: token.localAddress,
+    chainId: token.localAddress.includes("::") ? 1000 : 1, // Aptos vs Ethereum
+  }));
 
   // Connect wallet
   const connectWallet = async () => {
@@ -255,71 +115,193 @@ export default function IntentPool() {
           method: "eth_requestAccounts",
         })) as string[];
         setAccount(accounts[0]);
-        toast.success("🔗 Neural link established!");
+        setIsConnected(true);
         await loadUserBalances(accounts[0]);
+        toast.success("NEURAL LINK ESTABLISHED");
       } catch (error) {
-        toast.error("❌ Connection failed");
+        console.error("Failed to connect wallet:", error);
+        toast.error("NEURAL LINK FAILED");
       }
     } else {
-      toast.error("⚠️ MetaMask not detected");
+      toast.error("METAMASK MODULE NOT DETECTED");
     }
   };
 
   // Load intents
   const loadIntents = async () => {
-    setRefreshing(true);
+    setLoadingStates((prev) => ({ ...prev, intents: true }));
     try {
       const response = await fetch("/api/intents");
       const data = await response.json();
       setIntents(data.intents || []);
     } catch (error) {
+      console.error("Failed to load intents:", error);
       toast.error("Failed to load intents");
     } finally {
-      setRefreshing(false);
+      setLoadingStates((prev) => ({ ...prev, intents: false }));
     }
   };
 
-  // Submit intent with validation and flow management
-  const submitIntent = async (e: React.FormEvent) => {
+  // Load user balances (simplified - would need proper implementation)
+  const loadUserBalances = async (address: string) => {
+    if (!address) return;
+
+    setLoadingStates((prev) => ({ ...prev, balances: true }));
+    try {
+      // This would need proper implementation with balance service
+      const balances: UserBalance = {};
+      setUserBalances(balances);
+    } catch (error) {
+      console.error("Failed to load balances:", error);
+    } finally {
+      setLoadingStates((prev) => ({ ...prev, balances: false }));
+    }
+  };
+
+  // Load token prices
+  const loadTokenPrices = async () => {
+    setLoadingStates((prev) => ({ ...prev, prices: true }));
+    try {
+      const tokens = availableTokens.map((token) => token.address);
+      const tokensParam = tokens.join(",");
+      const response = await fetch(
+        `/api/prices?tokens=${encodeURIComponent(tokensParam)}`
+      );
+      const data = await response.json();
+      setTokenPrices(data.prices || {});
+    } catch (error) {
+      console.error("Failed to load token prices:", error);
+    } finally {
+      setLoadingStates((prev) => ({ ...prev, prices: false }));
+    }
+  };
+
+  // Initial setup
+  useEffect(() => {
+    // Check if wallet is already connected
+    if (typeof window.ethereum !== "undefined") {
+      window.ethereum
+        .request({ method: "eth_accounts" })
+        .then((accounts: unknown) => {
+          const accountsArray = accounts as string[];
+          if (accountsArray.length > 0) {
+            setAccount(accountsArray[0]);
+            setIsConnected(true);
+            loadUserBalances(accountsArray[0]);
+          }
+        });
+    }
+
+    loadIntents();
+    loadTokenPrices();
+
+    // Setup auto-refresh
+    const interval = setInterval(() => {
+      loadIntents();
+      if (account) {
+        loadUserBalances(account);
+      }
+    }, 10000); // Refresh every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [account]);
+
+  // Auto-check allowances when form data changes
+  useEffect(() => {
+    const checkAllowanceAutomatically = async () => {
+      console.log("checkAllowanceAutomatically");
+      console.log("isConnected", isConnected);
+      console.log("account", account);
+      console.log("formData.sellToken", formData.sellToken);
+      console.log("formData.sellAmount", formData.sellAmount);
+      console.log("currentStep", currentStep);
+
+      if (
+        isConnected &&
+        account &&
+        formData.sellToken &&
+        formData.sellAmount &&
+        currentStep === FlowStep.FORM
+      ) {
+        try {
+          console.log("checkAllowanceAutomatically 2");
+          await flowManager.checkAllowance(
+            account,
+            formData.sellToken,
+            formData.sellAmount
+          );
+        } catch (error) {
+          console.error("Auto allowance check failed:", error);
+          // Don't show error toast for automatic checks
+        }
+      }
+    };
+
+    // Debounce the allowance check to avoid excessive API calls
+    const timeoutId = setTimeout(checkAllowanceAutomatically, 500);
+    return () => clearTimeout(timeoutId);
+  }, [
+    isConnected,
+    account,
+    formData.sellToken,
+    formData.sellAmount,
+    currentStep,
+  ]);
+
+  // Handle form submission
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!account) {
-      toast.error("Please connect your wallet");
+
+    if (!isConnected) {
+      toast.error("NEURAL LINK REQUIRED");
       return;
     }
 
+    // Validate form data
     const validation = validateFormData(formData);
     if (!validation.valid) {
-      toast.error(validation.error || "Invalid form data");
+      toast.error(validation.error || "INVALID FUSION PARAMETERS");
       return;
     }
 
-    // Only check allowance for EVM chains (chain 1)
-    if (formData.chainIn === 1) {
-      setCurrentStep(FlowStep.CHECKING_ALLOWANCE);
-      await flowManager.checkAllowance(
-        account,
-        formData.sellToken,
-        formData.sellAmount
-      );
-    } else {
-      // For non-EVM chains, proceed directly to signing
-      await flowManager.executeIntent(
+    // If allowance is already sufficient, execute directly
+    if (allowanceState.hasEnoughAllowance) {
+      await executeIntent();
+      return;
+    }
+
+    // Check allowance if not already done
+    await flowManager.checkAllowance(
+      account,
+      formData.sellToken,
+      formData.sellAmount
+    );
+  };
+
+  // Execute the intent
+  const executeIntent = async () => {
+    try {
+      await flowManager.executeFusionOrder(
         account,
         formData,
         loadIntents,
         loadUserBalances
       );
-      setFormData(getDefaultFormData());
+    } catch (error) {
+      console.error("Failed to execute intent:", error);
+      toast.error("FUSION EXECUTION FAILED");
     }
   };
 
   // Handle approval
   const handleApproval = async () => {
-    if (!account || !window.ethereum) return;
-
     try {
+      if (!window.ethereum) {
+        throw new Error("MetaMask not found");
+      }
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
+
       await flowManager.approveToken(
         formData.sellToken,
         formData.sellAmount,
@@ -327,27 +309,17 @@ export default function IntentPool() {
       );
     } catch (error) {
       console.error("Approval error:", error);
+      toast.error("TOKEN APPROVAL FAILED");
     }
   };
 
-  // Handle intent execution
-  const handleExecuteIntent = async () => {
-    if (!account) return;
-
-    await flowManager.executeIntent(
-      account,
-      formData,
-      loadIntents,
-      loadUserBalances
-    );
-    setFormData(getDefaultFormData());
-  };
-
-  // Cancel intent
+  // Cancel an intent
   const cancelIntent = async (intentId: string, nonce: number) => {
-    if (!account || !window.ethereum) return;
-
     try {
+      if (!window.ethereum) {
+        throw new Error("MetaMask not found");
+      }
+
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
 
@@ -355,9 +327,9 @@ export default function IntentPool() {
       const network = await provider.getNetwork();
       const currentChainId = Number(network.chainId);
 
-      // Create dynamic domain with current chain ID
-      const dynamicDomain = {
-        name: "CrossChainIntentPool",
+      // Create dynamic domain
+      const domain = {
+        name: "CrossChainFusionPlus",
         version: "1",
         chainId: currentChainId,
         verifyingContract:
@@ -367,722 +339,995 @@ export default function IntentPool() {
 
       const message = { intentId, nonce };
       const signature = await signer.signTypedData(
-        dynamicDomain,
+        domain,
         CANCEL_TYPE,
         message
       );
+
       const response = await fetch(`/api/intents/${intentId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ signature }),
       });
+
       if (response.ok) {
-        toast.success("Intent cancelled!");
+        toast.success("FUSION ORDER TERMINATED");
         loadIntents();
       } else {
-        const result = await response.json();
-        toast.error(result.error || "Failed to cancel intent");
+        const error = await response.json();
+        toast.error(error.error || "TERMINATION FAILED");
       }
     } catch (error) {
-      toast.error("Failed to cancel intent");
+      console.error("Cancel error:", error);
+      toast.error("TERMINATION FAILED");
     }
   };
 
-  // Helper functions
-  const formatTimeRemaining = (expiration: number) => {
-    const now = Math.floor(Date.now() / 1000);
-    const remaining = expiration - now;
-    if (remaining <= 0) return "Expired";
-    const hours = Math.floor(remaining / 3600);
-    const minutes = Math.floor((remaining % 3600) / 60);
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
+  // Get token info helper
+  const getTokenInfoForChain = (address: string, chainId: number) => {
+    return availableTokens.find(
+      (token) => token.address === address && token.chainId === chainId
+    );
   };
 
-  const getTokenPrice = (tokenAddress: string): string => {
-    return tokenPrices[tokenAddress] || "0";
-  };
-
-  const getTokenBalance = (tokenAddress: string): TokenBalance | null => {
-    return tokenBalances[tokenAddress.toLowerCase()] || null;
-  };
-
-  const calculateTokenUSD = (amount: string, tokenAddress: string): string => {
-    const price = getTokenPrice(tokenAddress);
-    if (!price || price === "0") return "$0.00";
-    const amountNum = parseFloat(amount);
-    const priceNum = parseFloat(price);
-    if (isNaN(amountNum) || isNaN(priceNum)) return "$0.00";
-    return `$${(amountNum * priceNum).toFixed(2)}`;
-  };
-
-  const hasValidPrice = (tokenAddress: string): boolean => {
-    const price = getTokenPrice(tokenAddress);
-    return price !== "0" && price !== "";
-  };
-
-  // Effects
-  useEffect(() => {
-    loadIntents();
-    loadTokenPrices();
-    const interval = setInterval(() => {
-      loadIntents();
-      loadTokenPrices();
-    }, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    if (account) {
-      loadUserBalances(account);
+  // Format balance for display
+  const formatBalance = (balance: string, decimals: number): string => {
+    try {
+      const formatted = parseFloat(ethers.formatUnits(balance, decimals));
+      return formatted.toFixed(4);
+    } catch {
+      return "0.0000";
     }
-  }, [account]);
+  };
 
-  useEffect(() => {
-    if (currentStep !== FlowStep.FORM) {
-      flowManager.resetFlow();
+  // Get USD value of amount
+  const getUSDValue = (amount: string, tokenAddress: string): string => {
+    try {
+      const price = tokenPrices[tokenAddress.toLowerCase()] || 0;
+      const value = parseFloat(amount) * price;
+      return value.toFixed(2);
+    } catch {
+      return "0.00";
     }
-  }, [formData.sellToken, formData.sellAmount, formData.chainIn]);
+  };
 
   return (
-    <div className="min-h-screen bg-black relative overflow-hidden">
-      {/* Cyberpunk Background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-black to-cyan-900/20"></div>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(120,119,198,0.1),transparent_50%)]"></div>
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(0,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,255,0.03)_1px,transparent_1px)] bg-[size:50px_50px]"></div>
-      <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-pulse"></div>
-      <div className="absolute bottom-0 right-0 w-full h-px bg-gradient-to-l from-transparent via-purple-400 to-transparent animate-pulse"></div>
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
+      {/* Enhanced background effects */}
+      <div className="absolute inset-0 bg-gradient-to-br from-purple-900/30 via-black to-cyan-900/30"></div>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(147,51,234,0.2),transparent_40%)]"></div>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_70%,rgba(6,182,212,0.15),transparent_40%)]"></div>
 
+      {/* Animated grid lines */}
+      <div className="absolute inset-0 opacity-20">
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `
+            linear-gradient(rgba(139, 92, 246, 0.3) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(139, 92, 246, 0.3) 1px, transparent 1px)
+          `,
+            backgroundSize: "50px 50px",
+            animation: "pulse 4s ease-in-out infinite",
+          }}
+        ></div>
+      </div>
+
+      {/* Toast notifications */}
       <Toaster
         position="top-right"
         toastOptions={{
           style: {
-            background: "rgba(0, 0, 0, 0.9)",
+            background: "rgba(0, 0, 0, 0.95)",
             color: "#00ffff",
-            border: "1px solid rgba(0, 255, 255, 0.3)",
+            border: "1px solid rgba(0, 255, 255, 0.5)",
             borderRadius: "8px",
+            fontFamily: "monospace",
+            boxShadow: "0 0 20px rgba(0, 255, 255, 0.3)",
           },
         }}
       />
 
-      <div className="relative z-10 max-w-7xl mx-auto p-6">
+      <div className="relative z-10 max-w-6xl mx-auto p-6">
         {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-6xl font-mono font-bold bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-4 tracking-wider">
-            INTENT_GRID.EXE
-          </h1>
-          <p className="text-cyan-300 text-lg font-mono tracking-wide">
-            &gt; CROSS-CHAIN NEURAL SWAP PROTOCOL
-          </p>
-          <div className="flex justify-center items-center gap-4 mt-4">
-            <div className="flex items-center gap-2 text-green-400 text-sm font-mono">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span>MAINNET_PRICES_ACTIVE</span>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-5xl font-mono font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 bg-clip-text text-transparent tracking-wider">
+              FUSION+ GRID
+            </h1>
+            <div className="flex items-center mt-3">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-3"></div>
+              <p className="text-cyan-300 text-sm font-mono tracking-wide">
+                &gt; QUANTUM CROSS-CHAIN PROTOCOL ACTIVE
+              </p>
             </div>
-            {pricesLoading && (
-              <div className="flex items-center gap-2 text-yellow-400 text-sm font-mono">
-                <Zap className="w-4 h-4 animate-spin" />
-                <span>SYNCING_DATA</span>
+          </div>
+
+          {/* Enhanced Wallet Connection */}
+          <div className="flex items-center space-x-4">
+            {!isConnected ? (
+              <button
+                onClick={connectWallet}
+                className="flex items-center px-8 py-4 bg-gradient-to-r from-purple-600/30 to-cyan-600/30 border-2 border-purple-400/50 rounded-xl hover:border-purple-400/80 transition-all duration-300 font-mono text-purple-200 hover:text-white transform hover:scale-105 shadow-lg hover:shadow-purple-500/50"
+              >
+                <Wallet className="w-5 h-5 mr-3" />
+                NEURAL_LINK
+              </button>
+            ) : (
+              <div className="flex items-center space-x-4 px-6 py-3 bg-gradient-to-r from-green-900/40 to-emerald-900/40 border-2 border-green-400/50 rounded-xl shadow-lg shadow-green-500/30">
+                <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse shadow-lg shadow-green-400/50"></div>
+                <span className="font-mono text-green-300 text-sm tracking-wide">
+                  {account.slice(0, 6)}...{account.slice(-4)}
+                </span>
+                <div className="text-xs text-green-400/70 font-mono">
+                  LINKED
+                </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Wallet Connection */}
-        <div className="text-center mb-12">
-          {!account ? (
-            <button
-              onClick={connectWallet}
-              className="group relative inline-flex items-center px-8 py-4 bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border-2 border-cyan-400/50 rounded-lg hover:border-cyan-400 transition-all duration-300 font-mono text-cyan-300 hover:text-white transform hover:scale-105"
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/10 to-purple-400/10 rounded-lg blur-xl group-hover:blur-2xl transition-all duration-300"></div>
-              <Wallet className="w-6 h-6 mr-3 relative z-10" />
-              <span className="relative z-10 text-lg tracking-wider">
-                ESTABLISH_NEURAL_LINK
-              </span>
-            </button>
-          ) : (
-            <div className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-green-500/20 to-cyan-500/20 border border-green-400/50 rounded-lg font-mono text-green-300">
-              <div className="w-3 h-3 bg-green-400 rounded-full mr-3 animate-pulse"></div>
-              <span className="tracking-wider">
-                LINKED: {account.slice(0, 6)}...{account.slice(-4)}
-              </span>
+        {/* Connection Warning Block */}
+        {!isConnected && (
+          <div className="mb-8 p-6 bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border-2 border-yellow-400/50 rounded-xl backdrop-blur-xl">
+            <div className="flex items-center justify-center space-x-4">
+              <WifiOff className="w-8 h-8 text-yellow-400 animate-pulse" />
+              <div className="text-center">
+                <h3 className="text-xl font-mono text-yellow-300 mb-2">
+                  NEURAL LINK REQUIRED
+                </h3>
+                <p className="text-yellow-400/80 font-mono text-sm">
+                  &gt; Connect your MetaMask wallet to access the Fusion Grid
+                </p>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Tab Navigation */}
-        <div className="flex justify-center mb-8">
-          <div className="relative">
-            <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-xl blur opacity-20"></div>
-            <div className="relative bg-black/80 backdrop-blur-xl border border-cyan-400/30 rounded-xl p-2 flex">
-              <button
-                onClick={() => setActiveTab("compiler")}
-                className={`px-6 py-3 font-mono text-sm tracking-wider uppercase rounded-lg transition-all duration-300 ${
-                  activeTab === "compiler"
-                    ? "bg-gradient-to-r from-cyan-500/30 to-purple-500/30 text-cyan-300 border border-cyan-400/50"
-                    : "text-gray-400 hover:text-gray-300 hover:bg-gray-800/30"
-                }`}
-              >
-                INTENT_COMPILER
-              </button>
-              <button
-                onClick={() => setActiveTab("pool")}
-                className={`px-6 py-3 font-mono text-sm tracking-wider uppercase rounded-lg transition-all duration-300 ${
-                  activeTab === "pool"
-                    ? "bg-gradient-to-r from-purple-500/30 to-pink-500/30 text-purple-300 border border-purple-400/50"
-                    : "text-gray-400 hover:text-gray-300 hover:bg-gray-800/30"
-                }`}
-              >
-                INTENT_POOL
-              </button>
-            </div>
+        {/* Enhanced Tab Navigation */}
+        <div className="mb-8">
+          <div className="flex space-x-2 border-b border-purple-400/30">
+            <button
+              onClick={() => setActiveTab("create")}
+              className={`px-6 py-4 font-mono text-sm transition-all duration-300 border-b-2 ${
+                activeTab === "create"
+                  ? "text-cyan-300 border-cyan-400 bg-cyan-400/10 shadow-lg shadow-cyan-400/20"
+                  : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+              }`}
+            >
+              <div className="flex items-center space-x-2">
+                <Target className="w-4 h-4" />
+                <span>CREATE_FUSION</span>
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab("orders")}
+              className={`px-6 py-4 font-mono text-sm transition-all duration-300 border-b-2 ${
+                activeTab === "orders"
+                  ? "text-purple-300 border-purple-400 bg-purple-400/10 shadow-lg shadow-purple-400/20"
+                  : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
+              }`}
+            >
+              <div className="flex items-center space-x-2">
+                <Activity className="w-4 h-4" />
+                <span>ACTIVE_ORDERS</span>
+                <span className="text-xs bg-purple-900/50 px-2 py-1 rounded-full">
+                  {intents.length}
+                </span>
+              </div>
+            </button>
           </div>
         </div>
 
         {/* Tab Content */}
-        <div className="max-w-4xl mx-auto">
-          {activeTab === "compiler" && (
-            <div className="relative">
-              <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-2xl blur opacity-20 animate-pulse"></div>
-              <div
-                className={`relative bg-black/80 backdrop-blur-xl border border-cyan-400/30 rounded-2xl p-8 shadow-2xl ${
-                  !account ? "opacity-50 pointer-events-none" : ""
-                }`}
-              >
-                <h2 className="text-3xl font-mono font-bold mb-8 flex items-center text-transparent bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text">
-                  <ArrowLeftRight className="w-8 h-8 mr-3 text-cyan-400" />
-                  INTENT_COMPILER
-                </h2>
-
-                {!account && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-2xl">
-                    <div className="text-center">
-                      <Wallet className="w-12 h-12 mx-auto mb-4 text-cyan-400" />
-                      <p className="text-cyan-300 font-mono text-lg">
-                        NEURAL_LINK_REQUIRED
-                      </p>
-                      <p className="text-gray-400 font-mono text-sm mt-2">
-                        Connect wallet to access intent compiler
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <form onSubmit={submitIntent} className="space-y-8">
-                  {/* Chain Selection */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        SOURCE_CHAIN
-                      </label>
-                      <select
-                        value={formData.chainIn}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            chainIn: parseInt(e.target.value),
-                          })
-                        }
-                        className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                      >
-                        <option value={1}>ETHEREUM.MAINNET</option>
-                        <option value={1000}>APTOS.CORE</option>
-                      </select>
-                    </div>
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        TARGET_CHAIN
-                      </label>
-                      <select
-                        value={formData.chainOut}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            chainOut: parseInt(e.target.value),
-                          })
-                        }
-                        className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                      >
-                        <option value={1}>ETHEREUM.MAINNET</option>
-                        <option value={1000}>APTOS.CORE</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Token Selection */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        SELL_TOKEN
-                      </label>
-                      <select
-                        value={formData.sellToken}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            sellToken: e.target.value,
-                          })
-                        }
-                        className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                        required
-                      >
-                        <option value="">SELECT_ASSET</option>
-                        {TOKENS[formData.chainIn as keyof typeof TOKENS]?.map(
-                          (token) => {
-                            const price = getTokenPrice(token.address);
-                            const balance = getTokenBalance(token.address);
-                            const priceDisplay = hasValidPrice(token.address)
-                              ? `$${price}`
-                              : "N/A";
-                            return (
-                              <option key={token.address} value={token.address}>
-                                {token.symbol} - {priceDisplay}{" "}
-                                {balance
-                                  ? `(${formatBalance(
-                                      balance.formattedBalance
-                                    )})`
-                                  : ""}
-                              </option>
-                            );
-                          }
-                        )}
-                      </select>
-                    </div>
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        BUY_TOKEN
-                      </label>
-                      <select
-                        value={formData.buyToken}
-                        onChange={(e) =>
-                          setFormData({ ...formData, buyToken: e.target.value })
-                        }
-                        className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                        required
-                      >
-                        <option value="">SELECT_ASSET</option>
-                        {TOKENS[formData.chainOut as keyof typeof TOKENS]?.map(
-                          (token) => {
-                            const price = getTokenPrice(token.address);
-                            const priceDisplay = hasValidPrice(token.address)
-                              ? `$${price}`
-                              : "N/A";
-                            return (
-                              <option key={token.address} value={token.address}>
-                                {token.symbol} - {priceDisplay}
-                              </option>
-                            );
-                          }
-                        )}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Amounts */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        SELL_AMOUNT
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          step="0.000001"
-                          value={formData.sellAmount}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              sellAmount: e.target.value,
-                            })
-                          }
-                          className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                          placeholder="0.0000"
-                          required
-                        />
-                        {formData.sellAmount && formData.sellToken && (
-                          <div className="absolute -bottom-6 left-0 text-xs font-mono text-green-400">
-                            ≈{" "}
-                            {calculateTokenUSD(
-                              formData.sellAmount,
-                              formData.sellToken
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        MIN_BUY_AMOUNT
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          step="0.000001"
-                          value={formData.minBuyAmount}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              minBuyAmount: e.target.value,
-                            })
-                          }
-                          className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                          placeholder="0.0000"
-                          required
-                        />
-                        {formData.minBuyAmount && formData.buyToken && (
-                          <div className="absolute -bottom-6 left-0 text-xs font-mono text-green-400">
-                            ≈{" "}
-                            {calculateTokenUSD(
-                              formData.minBuyAmount,
-                              formData.buyToken
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Settings */}
-                  <div className="grid grid-cols-2 gap-6 mt-8">
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        DEADLINE_HOURS
-                      </label>
-                      <input
-                        type="number"
-                        min="0.1"
-                        step="0.1"
-                        value={formData.deadline}
-                        onChange={(e) =>
-                          setFormData({ ...formData, deadline: e.target.value })
-                        }
-                        className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                      />
-                    </div>
-                    <div className="space-y-3">
-                      <label className="block text-sm font-mono text-cyan-300 tracking-wider uppercase">
-                        MAX_SLIPPAGE_%
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        value={formData.maxSlippage / 100}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            maxSlippage: parseFloat(e.target.value) * 100,
-                          })
-                        }
-                        className="w-full p-4 bg-black/50 border border-cyan-400/30 rounded-lg focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 text-white font-mono backdrop-blur-sm transition-all duration-300"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Multi-step flow UI */}
-                  <div className="mt-8 space-y-4">
-                    {/* Flow Step Indicator */}
-                    {currentStep !== FlowStep.FORM && (
-                      <div className="flex items-center justify-center space-x-4 mb-6">
-                        <div className="flex items-center space-x-2">
-                          {[
-                            {
-                              step: FlowStep.CHECKING_ALLOWANCE,
-                              label: "CHECK",
-                              icon: Zap,
-                            },
-                            {
-                              step: FlowStep.NEEDS_APPROVAL,
-                              label: "APPROVE",
-                              icon: ArrowUp,
-                            },
-                            {
-                              step: FlowStep.READY_TO_SIGN,
-                              label: "SIGN",
-                              icon: CheckCircle,
-                            },
-                          ].map(({ step, label, icon: Icon }, index) => (
-                            <div key={step} className="flex items-center">
-                              <div
-                                className={`flex items-center justify-center w-8 h-8 rounded-full border-2 font-mono text-xs ${
-                                  currentStep === step
-                                    ? "border-cyan-400 bg-cyan-400/20 text-cyan-300"
-                                    : [
-                                        FlowStep.READY_TO_SIGN,
-                                        FlowStep.SIGNING,
-                                      ].includes(currentStep) &&
-                                      [
-                                        FlowStep.CHECKING_ALLOWANCE,
-                                        FlowStep.NEEDS_APPROVAL,
-                                      ].includes(step)
-                                    ? "border-green-400 bg-green-400/20 text-green-300"
-                                    : "border-gray-600 bg-gray-600/20 text-gray-400"
-                                }`}
-                              >
-                                <Icon className="w-4 h-4" />
-                              </div>
-                              <span className="ml-2 text-xs font-mono text-gray-400 hidden sm:block">
-                                {label}
-                              </span>
-                              {index < 2 && (
-                                <div className="w-8 h-0.5 bg-gray-600 ml-2 mr-2 hidden sm:block"></div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Allowance Status Display */}
-                    {[
-                      FlowStep.CHECKING_ALLOWANCE,
-                      FlowStep.NEEDS_APPROVAL,
-                      FlowStep.READY_TO_SIGN,
-                    ].includes(currentStep) && (
-                      <div className="p-4 border border-cyan-400/30 rounded-lg bg-cyan-400/5">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-mono text-cyan-300">
-                            ALLOWANCE_STATUS:
-                          </span>
-                          {allowanceState.isLoading ? (
-                            <Zap className="w-4 h-4 animate-spin text-yellow-400" />
-                          ) : allowanceState.hasEnoughAllowance ? (
-                            <CheckCircle className="w-4 h-4 text-green-400" />
-                          ) : (
-                            <AlertCircle className="w-4 h-4 text-red-400" />
-                          )}
-                        </div>
-                        {!allowanceState.isLoading && (
-                          <>
-                            <div className="text-xs font-mono text-gray-300 space-y-1">
-                              <div className="flex justify-between">
-                                <span>CURRENT:</span>
-                                <span className="text-yellow-400">
-                                  {formatAllowanceWithDecimals(
-                                    allowanceState.currentAllowance,
-                                    allowanceState.decimals
-                                  )}
-                                </span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span>REQUIRED:</span>
-                                <span className="text-cyan-400">
-                                  {formatAllowanceWithDecimals(
-                                    allowanceState.requiredAmount,
-                                    allowanceState.decimals
-                                  )}
-                                </span>
-                              </div>
-                            </div>
-                            {approvalTxHash && (
-                              <div className="mt-2 text-xs font-mono text-green-400">
-                                TX: {approvalTxHash.slice(0, 10)}...
-                                {approvalTxHash.slice(-8)}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Dynamic Action Button */}
-                    {currentStep === FlowStep.FORM && (
-                      <button
-                        type="submit"
-                        disabled={loading || !account}
-                        className="group relative w-full py-4 bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed rounded-lg transition-all duration-300 font-mono text-lg tracking-wider uppercase transform hover:scale-105 disabled:transform-none"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-r from-cyan-400 to-purple-400 rounded-lg blur opacity-30 group-hover:opacity-50 transition-opacity duration-300"></div>
-                        <span className="relative z-10 flex items-center justify-center">
-                          <TrendingUp className="w-5 h-5 mr-2" />
-                          CHECK_ALLOWANCE
-                        </span>
-                      </button>
-                    )}
-
-                    {currentStep === FlowStep.CHECKING_ALLOWANCE && (
-                      <button
-                        disabled
-                        className="w-full py-4 bg-gradient-to-r from-yellow-500/50 to-orange-500/50 rounded-lg font-mono text-lg tracking-wider uppercase cursor-not-allowed"
-                      >
-                        <span className="flex items-center justify-center">
-                          <Zap className="w-5 h-5 mr-2 animate-spin" />
-                          CHECKING_ALLOWANCE...
-                        </span>
-                      </button>
-                    )}
-
-                    {currentStep === FlowStep.NEEDS_APPROVAL && (
-                      <div className="space-y-3">
-                        <button
-                          onClick={handleApproval}
-                          className="group relative w-full py-4 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 rounded-lg transition-all duration-300 font-mono text-lg tracking-wider uppercase transform hover:scale-105"
-                        >
-                          <div className="absolute inset-0 bg-gradient-to-r from-orange-400 to-red-400 rounded-lg blur opacity-30 group-hover:opacity-50 transition-opacity duration-300"></div>
-                          <span className="relative z-10 flex items-center justify-center">
-                            <ArrowUp className="w-5 h-5 mr-2" />
-                            APPROVE_TOKEN
-                          </span>
-                        </button>
-                        <button
-                          onClick={() => flowManager.resetFlow()}
-                          className="w-full py-2 text-gray-400 hover:text-gray-300 font-mono text-sm tracking-wider uppercase transition-colors duration-300"
-                        >
-                          ← BACK_TO_FORM
-                        </button>
-                      </div>
-                    )}
-
-                    {currentStep === FlowStep.APPROVING && (
-                      <button
-                        disabled
-                        className="w-full py-4 bg-gradient-to-r from-orange-500/50 to-red-500/50 rounded-lg font-mono text-lg tracking-wider uppercase cursor-not-allowed"
-                      >
-                        <span className="flex items-center justify-center">
-                          <Zap className="w-5 h-5 mr-2 animate-spin" />
-                          APPROVING_TOKEN...
-                        </span>
-                      </button>
-                    )}
-
-                    {currentStep === FlowStep.READY_TO_SIGN && (
-                      <div className="space-y-3">
-                        <button
-                          onClick={handleExecuteIntent}
-                          disabled={loading}
-                          className="group relative w-full py-4 bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-400 hover:to-cyan-400 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed rounded-lg transition-all duration-300 font-mono text-lg tracking-wider uppercase transform hover:scale-105 disabled:transform-none"
-                        >
-                          <div className="absolute inset-0 bg-gradient-to-r from-green-400 to-cyan-400 rounded-lg blur opacity-30 group-hover:opacity-50 transition-opacity duration-300"></div>
-                          <span className="relative z-10 flex items-center justify-center">
-                            <CheckCircle className="w-5 h-5 mr-2" />
-                            SIGN_INTENT
-                          </span>
-                        </button>
-                        <button
-                          onClick={() => flowManager.resetFlow()}
-                          className="w-full py-2 text-gray-400 hover:text-gray-300 font-mono text-sm tracking-wider uppercase transition-colors duration-300"
-                        >
-                          ← BACK_TO_FORM
-                        </button>
-                      </div>
-                    )}
-
-                    {currentStep === FlowStep.SIGNING && (
-                      <button
-                        disabled
-                        className="w-full py-4 bg-gradient-to-r from-green-500/50 to-cyan-500/50 rounded-lg font-mono text-lg tracking-wider uppercase cursor-not-allowed"
-                      >
-                        <span className="flex items-center justify-center">
-                          <Zap className="w-5 h-5 mr-2 animate-spin" />
-                          SIGNING_INTENT...
-                        </span>
-                      </button>
-                    )}
-                  </div>
-                </form>
-              </div>
+        {activeTab === "create" && (
+          <div className="w-3/5 mx-auto bg-black/90 backdrop-blur-xl border-2 border-purple-400/40 rounded-2xl p-8 shadow-2xl shadow-purple-500/20">
+            <div className="flex items-center mb-8">
+              <Target className="w-6 h-6 text-purple-400 mr-4" />
+              <h2 className="text-2xl font-mono text-purple-300 tracking-wide">
+                FUSION_ORDER_MATRIX
+              </h2>
             </div>
-          )}
 
-          {activeTab === "pool" && (
-            <div className="relative">
-              <div className="absolute -inset-1 bg-gradient-to-r from-purple-500 via-pink-500 to-cyan-500 rounded-2xl blur opacity-20 animate-pulse"></div>
-              <div className="relative bg-black/80 backdrop-blur-xl border border-purple-400/30 rounded-2xl p-8 shadow-2xl">
-                <div className="flex items-center justify-between mb-8">
-                  <h2 className="text-3xl font-mono font-bold flex items-center text-transparent bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text">
-                    <Filter className="w-8 h-8 mr-3 text-purple-400" />
-                    INTENT_POOL
-                  </h2>
-                  <button
-                    onClick={loadIntents}
-                    disabled={refreshing}
-                    className="p-3 text-purple-400 hover:text-purple-300 disabled:animate-spin border border-purple-400/30 rounded-lg hover:border-purple-400/50 transition-all duration-300"
+            <form onSubmit={handleSubmit} className="space-y-8">
+              {/* Chain Selection */}
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
+                    SOURCE_CHAIN
+                  </label>
+                  <select
+                    value={formData.chainIn}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        chainIn: parseInt(e.target.value),
+                      })
+                    }
+                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
                   >
-                    <RefreshCw className="w-6 h-6" />
-                  </button>
+                    <option value={1}>ETHEREUM_MAINNET</option>
+                    <option value={1000}>APTOS_NETWORK</option>
+                  </select>
                 </div>
+                <div>
+                  <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
+                    DEST_CHAIN
+                  </label>
+                  <select
+                    value={formData.chainOut}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        chainOut: parseInt(e.target.value),
+                      })
+                    }
+                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
+                  >
+                    <option value={1}>ETHEREUM_MAINNET</option>
+                    <option value={1000}>APTOS_NETWORK</option>
+                  </select>
+                </div>
+              </div>
 
-                <div className="space-y-4 max-h-96 overflow-y-auto scrollbar-thin scrollbar-track-black/20 scrollbar-thumb-cyan-400/30">
-                  {intents.length === 0 ? (
-                    <div className="text-center py-12">
-                      <div className="text-gray-500 font-mono text-lg">
-                        NO_ACTIVE_INTENTS
-                      </div>
-                      <div className="text-gray-600 font-mono text-sm mt-2">
-                        &gt; GRID_EMPTY.STATUS
-                      </div>
+              {/* Token Selection */}
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
+                    SELL_TOKEN
+                  </label>
+                  <select
+                    value={formData.sellToken}
+                    onChange={(e) =>
+                      setFormData({ ...formData, sellToken: e.target.value })
+                    }
+                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
+                  >
+                    <option value="">SELECT_TOKEN</option>
+                    {availableTokens
+                      .filter((token) => token.chainId === formData.chainIn)
+                      .map((token) => (
+                        <option key={token.address} value={token.address}>
+                          {token.symbol}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
+                    BUY_TOKEN
+                  </label>
+                  <select
+                    value={formData.buyToken}
+                    onChange={(e) =>
+                      setFormData({ ...formData, buyToken: e.target.value })
+                    }
+                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
+                  >
+                    <option value="">SELECT_TOKEN</option>
+                    {availableTokens
+                      .filter((token) => token.chainId === formData.chainOut)
+                      .map((token) => (
+                        <option key={token.address} value={token.address}>
+                          {token.symbol}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Amount Inputs */}
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
+                    SELL_AMOUNT
+                  </label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={formData.sellAmount}
+                    onChange={(e) =>
+                      setFormData({ ...formData, sellAmount: e.target.value })
+                    }
+                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
+                    placeholder="0.00"
+                  />
+                  {formData.sellToken && (
+                    <div className="text-xs text-cyan-400/70 mt-2 font-mono">
+                      ≈ ${getUSDValue(formData.sellAmount, formData.sellToken)}{" "}
+                      USD
                     </div>
-                  ) : (
-                    intents.map((intent) => (
-                      <div
-                        key={intent.id}
-                        className="border border-gray-700/50 bg-gray-900/30 backdrop-blur-sm rounded-lg p-4 hover:border-cyan-400/30 hover:shadow-lg hover:shadow-cyan-400/10 transition-all duration-300"
-                      >
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center space-x-3">
-                            <span
-                              className={`px-3 py-1 text-xs rounded-full font-mono tracking-wider ${
-                                intent.status === "pending"
-                                  ? "bg-yellow-400/20 text-yellow-300 border border-yellow-400/30"
-                                  : intent.status === "filled"
-                                  ? "bg-green-400/20 text-green-300 border border-green-400/30"
-                                  : "bg-gray-400/20 text-gray-300 border border-gray-400/30"
-                              }`}
-                            >
-                              {intent.status.toUpperCase()}
-                            </span>
-                            <span className="text-sm text-cyan-300 font-mono">
-                              {CHAINS[intent.chainIn as keyof typeof CHAINS]} →{" "}
-                              {CHAINS[intent.chainOut as keyof typeof CHAINS]}
-                            </span>
-                          </div>
-                          <div className="flex items-center text-sm text-gray-400 font-mono">
-                            <Clock className="w-4 h-4 mr-1" />
-                            {formatTimeRemaining(intent.expiration)}
-                          </div>
-                        </div>
-
-                        <div className="text-sm text-gray-300 mb-2 font-mono">
-                          <TokenAmountDisplay
-                            amount={intent.amountIn}
-                            tokenAddress={intent.sellToken}
-                            label="SELL"
-                          />{" "}
-                          →{" "}
-                          <TokenAmountDisplay
-                            amount={intent.minAmountOut}
-                            tokenAddress={intent.buyToken}
-                            label="MIN_BUY"
-                          />
-                        </div>
-
-                        <div className="text-xs text-gray-500 mb-3 font-mono">
-                          USER: {intent.userAddress.slice(0, 6)}...
-                          {intent.userAddress.slice(-4)}
-                        </div>
-
-                        {account &&
-                          intent.userAddress.toLowerCase() ===
-                            account.toLowerCase() &&
-                          intent.status === "pending" && (
-                            <button
-                              onClick={() =>
-                                cancelIntent(intent.id, intent.nonce)
-                              }
-                              className="text-red-400 hover:text-red-300 text-sm font-mono tracking-wider border border-red-400/30 px-3 py-1 rounded hover:border-red-400/50 transition-all duration-300"
-                            >
-                              TERMINATE
-                            </button>
-                          )}
-                      </div>
-                    ))
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
+                    MIN_BUY_AMOUNT
+                  </label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    value={formData.minBuyAmount}
+                    onChange={(e) =>
+                      setFormData({ ...formData, minBuyAmount: e.target.value })
+                    }
+                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
+                    placeholder="0.00"
+                  />
+                  {formData.buyToken && (
+                    <div className="text-xs text-cyan-400/70 mt-2 font-mono">
+                      ≈ ${getUSDValue(formData.minBuyAmount, formData.buyToken)}{" "}
+                      USD
+                    </div>
                   )}
                 </div>
               </div>
+
+              {/* Auction Type */}
+              <div>
+                <label className="block text-sm font-mono text-cyan-300 mb-4 tracking-wide">
+                  AUCTION_TYPE
+                </label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({ ...formData, auctionType: "fixed" })
+                    }
+                    className={`p-4 rounded-xl border-2 font-mono text-sm transition-all duration-300 ${
+                      formData.auctionType === "fixed"
+                        ? "bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-lg shadow-cyan-400/30"
+                        : "bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                    }`}
+                  >
+                    FIXED_PRICE
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({ ...formData, auctionType: "dutch" })
+                    }
+                    className={`p-4 rounded-xl border-2 font-mono text-sm transition-all duration-300 ${
+                      formData.auctionType === "dutch"
+                        ? "bg-purple-500/20 border-purple-400 text-purple-300 shadow-lg shadow-purple-400/30"
+                        : "bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                    }`}
+                  >
+                    DUTCH_AUCTION
+                  </button>
+                </div>
+              </div>
+
+              {/* Dutch Auction Parameters */}
+              {formData.auctionType === "dutch" && (
+                <div className="space-y-6 p-6 bg-purple-900/20 border-2 border-purple-400/30 rounded-xl backdrop-blur-sm">
+                  <div className="flex items-center mb-4">
+                    <TrendingDown className="w-5 h-5 text-purple-400 mr-3" />
+                    <span className="text-sm font-mono text-purple-300 tracking-wide">
+                      AUCTION_PARAMETERS
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-xs font-mono text-purple-300/80 mb-2">
+                        START_PREMIUM_%
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={formData.startPricePremium}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            startPricePremium: e.target.value,
+                          })
+                        }
+                        className="w-full p-3 bg-gray-900/70 border border-purple-400/30 rounded-lg text-white font-mono text-sm focus:border-purple-400 focus:shadow-lg focus:shadow-purple-400/20 transition-all"
+                        placeholder="10"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-mono text-purple-300/80 mb-2">
+                        MIN_DISCOUNT_%
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={formData.minPriceDiscount}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            minPriceDiscount: e.target.value,
+                          })
+                        }
+                        className="w-full p-3 bg-gray-900/70 border border-purple-400/30 rounded-lg text-white font-mono text-sm focus:border-purple-400 focus:shadow-lg focus:shadow-purple-400/20 transition-all"
+                        placeholder="5"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-xs font-mono text-purple-300/80 mb-2">
+                        DECAY_RATE_0-1
+                      </label>
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={formData.decayRate}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            decayRate: e.target.value,
+                          })
+                        }
+                        className="w-full p-3 bg-gray-900/70 border border-purple-400/30 rounded-lg text-white font-mono text-sm focus:border-purple-400 focus:shadow-lg focus:shadow-purple-400/20 transition-all"
+                        placeholder="0.02"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-mono text-purple-300/80 mb-2">
+                        DURATION_SECONDS
+                      </label>
+                      <input
+                        type="number"
+                        value={formData.decayPeriod}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            decayPeriod: e.target.value,
+                          })
+                        }
+                        className="w-full p-3 bg-gray-900/70 border border-purple-400/30 rounded-lg text-white font-mono text-sm focus:border-purple-400 focus:shadow-lg focus:shadow-purple-400/20 transition-all"
+                        placeholder="3600"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-6">
+                    <div>
+                      <label className="block text-xs font-mono text-purple-300/80 mb-2">
+                        START_DELAY_SECONDS
+                      </label>
+                      <input
+                        type="number"
+                        value={formData.auctionStartDelay || "0"}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            auctionStartDelay: e.target.value,
+                          })
+                        }
+                        className="w-full p-3 bg-gray-900/70 border border-purple-400/30 rounded-lg text-white font-mono text-sm focus:border-purple-400 focus:shadow-lg focus:shadow-purple-400/20 transition-all"
+                        placeholder="0"
+                      />
+                      <div className="text-xs text-purple-400/70 mt-1">
+                        Delay before auction starts (0 = start immediately)
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Deadline */}
+              <div>
+                <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
+                  DEADLINE_HOURS
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="168"
+                  value={formData.deadline}
+                  onChange={(e) =>
+                    setFormData({ ...formData, deadline: e.target.value })
+                  }
+                  className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
+                />
+              </div>
+
+              {/* Destination Address for Cross-Chain Swaps */}
+              {formData.chainOut !== formData.chainIn && (
+                <div>
+                  <label className="block text-sm font-mono text-orange-300 mb-3 tracking-wide">
+                    DESTINATION_ADDRESS
+                    <span className="text-xs text-orange-400/70 ml-2">
+                      (Your address on{" "}
+                      {formData.chainOut === 1000
+                        ? "Aptos"
+                        : "destination chain"}
+                      )
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.destinationAddress || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        destinationAddress: e.target.value,
+                      })
+                    }
+                    className="w-full p-4 bg-gray-900/70 border-2 border-orange-400/50 rounded-xl text-white font-mono text-sm focus:border-orange-400 focus:shadow-lg focus:shadow-orange-400/30 transition-all backdrop-blur-sm"
+                    placeholder={
+                      formData.chainOut === 1000
+                        ? "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1"
+                        : "Your destination address"
+                    }
+                  />
+                  <div className="text-xs text-orange-400/70 mt-2 font-mono">
+                    {formData.chainOut === 1000
+                      ? "Provide your Aptos address (64-character hex string starting with 0x)"
+                      : "Provide your address on the destination chain where you want to receive tokens"}
+                  </div>
+                </div>
+              )}
+
+              {/* Enhanced Allowance Status Display */}
+              {formData.sellToken && formData.sellAmount && isConnected && (
+                <div className="space-y-3">
+                  {/* Allowance Status Header */}
+                  <div className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-900/20 to-purple-900/20 border border-blue-400/30 rounded-xl backdrop-blur-sm">
+                    <div className="flex items-center">
+                      <Wallet className="w-5 h-5 text-blue-400 mr-3" />
+                      <span className="font-mono text-blue-300 text-sm">
+                        TOKEN_ALLOWANCE_STATUS
+                      </span>
+                    </div>
+                    <div
+                      className={`px-3 py-1 rounded-lg font-mono text-xs ${
+                        allowanceState.hasEnoughAllowance
+                          ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                          : "bg-red-500/20 text-red-400 border border-red-500/30"
+                      }`}
+                    >
+                      {allowanceState.hasEnoughAllowance
+                        ? "APPROVED"
+                        : "NEEDS_APPROVAL"}
+                    </div>
+                  </div>
+
+                  {/* Allowance Details */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Current Allowance */}
+                    <div className="p-3 bg-cyan-900/10 border border-cyan-400/20 rounded-lg">
+                      <div className="text-xs font-mono text-cyan-400 mb-1">
+                        CURRENT_ALLOWANCE
+                      </div>
+                      <div className="font-mono text-cyan-300 text-sm">
+                        {(() => {
+                          const sellTokenInfo = getTokenInfoForChain(
+                            formData.sellToken,
+                            formData.chainIn
+                          );
+                          return sellTokenInfo
+                            ? ethers.formatUnits(
+                                allowanceState.currentAllowance,
+                                sellTokenInfo.decimals
+                              ) +
+                                " " +
+                                sellTokenInfo.symbol
+                            : ethers.formatEther(
+                                allowanceState.currentAllowance
+                              ) + " ETH";
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Required Amount */}
+                    <div className="p-3 bg-purple-900/10 border border-purple-400/20 rounded-lg">
+                      <div className="text-xs font-mono text-purple-400 mb-1">
+                        REQUIRED_AMOUNT
+                      </div>
+                      <div className="font-mono text-purple-300 text-sm">
+                        {(() => {
+                          const sellTokenInfo = getTokenInfoForChain(
+                            formData.sellToken,
+                            formData.chainIn
+                          );
+                          return sellTokenInfo
+                            ? ethers.formatUnits(
+                                allowanceState.requiredAmount,
+                                sellTokenInfo.decimals
+                              ) +
+                                " " +
+                                sellTokenInfo.symbol
+                            : ethers.formatEther(
+                                allowanceState.requiredAmount
+                              ) + " ETH";
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="text-gray-400">APPROVAL_PROGRESS</span>
+                      <span
+                        className={`${
+                          allowanceState.hasEnoughAllowance
+                            ? "text-green-400"
+                            : "text-orange-400"
+                        }`}
+                      >
+                        {allowanceState.hasEnoughAllowance
+                          ? "100%"
+                          : Math.min(
+                              100,
+                              Number(
+                                (allowanceState.currentAllowance *
+                                  BigInt(100)) /
+                                  (allowanceState.requiredAmount || BigInt(1))
+                              )
+                            ).toFixed(0)}
+                        %
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-500 ${
+                          allowanceState.hasEnoughAllowance
+                            ? "bg-gradient-to-r from-green-500 to-emerald-400"
+                            : "bg-gradient-to-r from-orange-500 to-red-400"
+                        }`}
+                        style={{
+                          width: `${
+                            allowanceState.hasEnoughAllowance
+                              ? 100
+                              : Math.min(
+                                  100,
+                                  Number(
+                                    (allowanceState.currentAllowance *
+                                      BigInt(100)) /
+                                      (allowanceState.requiredAmount ||
+                                        BigInt(1))
+                                  )
+                                )
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick Action for Sufficient Allowance */}
+                  {allowanceState.hasEnoughAllowance &&
+                    currentStep === FlowStep.FORM && (
+                      <div className="p-4 bg-gradient-to-r from-green-900/30 to-emerald-900/30 border-2 border-green-400/50 rounded-xl shadow-lg shadow-green-400/20">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center">
+                            <CheckCircle className="w-5 h-5 text-green-400 mr-3" />
+                            <div>
+                              <div className="font-mono text-green-300 text-sm">
+                                ALLOWANCE_APPROVED
+                              </div>
+                              <div className="font-mono text-green-400/70 text-xs">
+                                Ready for immediate execution
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={executeIntent}
+                            className="px-6 py-2 bg-green-500/20 border border-green-400/50 rounded-lg hover:border-green-400/80 transition-all font-mono text-green-300 hover:text-green-200 flex items-center transform hover:scale-105"
+                          >
+                            <Zap className="w-4 h-4 mr-2" />
+                            EXECUTE_NOW
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                </div>
+              )}
+
+              {/* Flow Control Buttons */}
+              <div className="space-y-4">
+                {currentStep === FlowStep.FORM && (
+                  <button
+                    type="submit"
+                    disabled={!isConnected || loading}
+                    className={`w-full p-5 border-2 rounded-xl transition-all duration-300 font-mono disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transform hover:scale-105 shadow-lg ${
+                      allowanceState.hasEnoughAllowance
+                        ? "bg-gradient-to-r from-green-600/30 to-emerald-600/30 border-green-400/50 hover:border-green-400/80 text-green-200 hover:text-white hover:shadow-green-500/50"
+                        : "bg-gradient-to-r from-purple-600/30 to-cyan-600/30 border-purple-400/50 hover:border-purple-400/80 text-purple-200 hover:text-white hover:shadow-purple-500/50"
+                    }`}
+                  >
+                    {loading ? (
+                      <Loader2 className="w-5 h-5 mr-3 animate-spin" />
+                    ) : (
+                      <Zap className="w-5 h-5 mr-3" />
+                    )}
+                    {loading
+                      ? "PROCESSING..."
+                      : allowanceState.hasEnoughAllowance
+                      ? "EXECUTE_FUSION"
+                      : "INITIALIZE_FUSION"}
+                  </button>
+                )}
+
+                {currentStep === FlowStep.CHECKING_ALLOWANCE && (
+                  <div className="w-full p-5 bg-yellow-900/30 border-2 border-yellow-400/50 rounded-xl flex items-center justify-center shadow-lg shadow-yellow-400/20">
+                    <Loader2 className="w-5 h-5 mr-3 animate-spin text-yellow-400" />
+                    <span className="font-mono text-yellow-300">
+                      CHECKING_ALLOWANCE...
+                    </span>
+                  </div>
+                )}
+
+                {currentStep === FlowStep.NEEDS_APPROVAL && (
+                  <button
+                    type="button"
+                    onClick={handleApproval}
+                    className="w-full p-5 bg-yellow-900/30 border-2 border-yellow-400/50 rounded-xl hover:border-yellow-400/80 transition-all duration-300 font-mono text-yellow-300 hover:text-yellow-200 flex items-center justify-center transform hover:scale-105 shadow-lg hover:shadow-yellow-400/50"
+                  >
+                    <CheckCircle className="w-5 h-5 mr-3" />
+                    APPROVE_TOKEN
+                  </button>
+                )}
+
+                {currentStep === FlowStep.APPROVING && (
+                  <div className="w-full p-5 bg-yellow-900/30 border-2 border-yellow-400/50 rounded-xl flex items-center justify-center shadow-lg shadow-yellow-400/20">
+                    <Loader2 className="w-5 h-5 mr-3 animate-spin text-yellow-400" />
+                    <span className="font-mono text-yellow-300">
+                      APPROVING_TOKEN...
+                    </span>
+                  </div>
+                )}
+
+                {currentStep === FlowStep.READY_TO_SIGN &&
+                  !allowanceState.hasEnoughAllowance && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          if (typeof window.ethereum === "undefined") {
+                            console.error("MetaMask not installed");
+                            return;
+                          }
+                          const provider = new ethers.BrowserProvider(
+                            window.ethereum
+                          );
+                          const signer = await provider.getSigner();
+                          await flowManager.approveToken(
+                            formData.sellToken,
+                            formData.sellAmount,
+                            signer
+                          );
+                        } catch (error) {
+                          console.error("Approval failed:", error);
+                        }
+                      }}
+                      className="w-full p-5 bg-yellow-900/30 border-2 border-yellow-400/50 rounded-xl hover:border-yellow-400/80 transition-all duration-300 font-mono text-yellow-300 hover:text-yellow-200 flex items-center justify-center transform hover:scale-105 shadow-lg hover:shadow-yellow-400/50"
+                    >
+                      <CheckCircle className="w-5 h-5 mr-3" />
+                      APPROVE_TOKEN
+                    </button>
+                  )}
+
+                {currentStep === FlowStep.READY_TO_SIGN &&
+                  allowanceState.hasEnoughAllowance && (
+                    <button
+                      type="button"
+                      onClick={executeIntent}
+                      className="w-full p-5 bg-green-900/30 border-2 border-green-400/50 rounded-xl hover:border-green-400/80 transition-all duration-300 font-mono text-green-300 hover:text-green-200 flex items-center justify-center transform hover:scale-105 shadow-lg hover:shadow-green-400/50"
+                    >
+                      <Zap className="w-5 h-5 mr-3" />
+                      EXECUTE_FUSION_ORDER
+                    </button>
+                  )}
+
+                {currentStep === FlowStep.SIGNING && (
+                  <div className="w-full p-5 bg-green-900/30 border-2 border-green-400/50 rounded-xl flex items-center justify-center shadow-lg shadow-green-400/20">
+                    <Loader2 className="w-5 h-5 mr-3 animate-spin text-green-400" />
+                    <span className="font-mono text-green-300">
+                      BROADCASTING_ORDER...
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Approval Transaction Hash */}
+              {approvalTxHash && (
+                <div className="p-4 bg-blue-900/30 border-2 border-blue-400/50 rounded-xl shadow-lg shadow-blue-400/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono text-blue-300">
+                      APPROVAL_TX:
+                    </span>
+                    <a
+                      href={`https://etherscan.io/tx/${approvalTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-mono text-blue-400 hover:text-blue-300 flex items-center transition-colors"
+                    >
+                      {approvalTxHash.slice(0, 10)}...
+                      <ExternalLink className="w-3 h-3 ml-1" />
+                    </a>
+                  </div>
+                </div>
+              )}
+            </form>
+          </div>
+        )}
+
+        {activeTab === "orders" && (
+          <div className="w-3/5 mx-auto bg-black/90 backdrop-blur-xl border-2 border-cyan-400/40 rounded-2xl p-8 shadow-2xl shadow-cyan-500/20">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center">
+                <Activity className="w-6 h-6 text-cyan-400 mr-4" />
+                <h2 className="text-2xl font-mono text-cyan-300 tracking-wide">
+                  ACTIVE_ORDERS_MATRIX
+                </h2>
+              </div>
+              <div className="text-sm font-mono text-cyan-400 bg-cyan-400/10 px-4 py-2 rounded-xl border border-cyan-400/30">
+                {intents.length} TOTAL
+              </div>
             </div>
-          )}
-        </div>
+
+            <div className="space-y-6 max-h-96 overflow-y-auto">
+              {loadingStates.intents ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
+                  <span className="ml-4 font-mono text-cyan-300 text-lg">
+                    LOADING_ORDERS...
+                  </span>
+                </div>
+              ) : intents.length === 0 ? (
+                <div className="text-center py-12">
+                  <Target className="w-16 h-16 mx-auto mb-4 text-gray-500" />
+                  <p className="text-gray-500 font-mono text-lg">
+                    NO_ACTIVE_ORDERS
+                  </p>
+                  <p className="text-gray-600 font-mono text-sm mt-2">
+                    &gt; Create your first fusion order to begin
+                  </p>
+                </div>
+              ) : (
+                intents.map((intent) => {
+                  // Handle both new FusionPlusIntent structure and legacy format
+                  const intentWithLegacy = intent as FusionPlusIntent & {
+                    sellToken?: string;
+                    buyToken?: string;
+                    sellAmount?: string;
+                    buyAmount?: string;
+                    chainIn?: number;
+                    chainOut?: number;
+                    auctionType?: string;
+                    userAddress?: string;
+                    amountIn?: string;
+                    minAmountOut?: string;
+                  };
+                  const fusionOrder = intent.fusionOrder;
+
+                  const sellTokenInfo = getTokenInfoForChain(
+                    fusionOrder?.makerAsset || intentWithLegacy.sellToken || "",
+                    fusionOrder?.srcChain || intentWithLegacy.chainIn || 1
+                  );
+                  const buyTokenInfo = getTokenInfoForChain(
+                    fusionOrder?.takerAsset || intentWithLegacy.buyToken || "",
+                    fusionOrder?.dstChain || intentWithLegacy.chainOut || 1
+                  );
+
+                  const isDutchAuction =
+                    fusionOrder?.startRate !== "0" ||
+                    intentWithLegacy.auctionType === "dutch";
+                  const isUserIntent =
+                    isConnected &&
+                    (
+                      fusionOrder?.maker || intentWithLegacy.userAddress
+                    )?.toLowerCase() === account.toLowerCase();
+
+                  return (
+                    <div
+                      key={intent.id}
+                      className={`p-6 rounded-xl border-2 transition-all duration-300 backdrop-blur-sm ${
+                        isUserIntent
+                          ? "bg-purple-900/30 border-purple-400/50 shadow-lg shadow-purple-400/20"
+                          : "bg-gray-900/40 border-gray-600/50 hover:border-gray-500/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center space-x-3">
+                          <div
+                            className={`w-3 h-3 rounded-full ${
+                              intent.status === "pending"
+                                ? "bg-green-400 animate-pulse shadow-lg shadow-green-400/50"
+                                : intent.status === "filled"
+                                ? "bg-blue-400 shadow-lg shadow-blue-400/50"
+                                : "bg-red-400 shadow-lg shadow-red-400/50"
+                            }`}
+                          ></div>
+                          <span className="text-sm font-mono text-gray-300">
+                            {intent.id.slice(0, 8)}...
+                          </span>
+                          {isDutchAuction && (
+                            <span className="text-xs font-mono text-purple-300 bg-purple-900/50 px-3 py-1 rounded-full border border-purple-400/30">
+                              DUTCH
+                            </span>
+                          )}
+                        </div>
+                        {isUserIntent && intent.status === "pending" && (
+                          <button
+                            onClick={() =>
+                              cancelIntent(intent.id, intent.nonce)
+                            }
+                            className="text-sm font-mono text-red-400 hover:text-red-300 transition-colors p-2 hover:bg-red-400/10 rounded-lg"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-4 mb-4">
+                        <div className="text-lg">
+                          <span className="text-cyan-400 font-mono font-bold">
+                            {sellTokenInfo?.symbol || "UNKNOWN"}
+                          </span>
+                          <span className="text-gray-400 mx-3">→</span>
+                          <span className="text-purple-400 font-mono font-bold">
+                            {buyTokenInfo?.symbol || "UNKNOWN"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-sm font-mono text-gray-300 space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">MAKING:</span>
+                          <span>
+                            {sellTokenInfo
+                              ? formatBalance(
+                                  fusionOrder?.makingAmount ||
+                                    intentWithLegacy.amountIn ||
+                                    "0",
+                                  sellTokenInfo.decimals
+                                )
+                              : "N/A"}{" "}
+                            {sellTokenInfo?.symbol}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">TAKING:</span>
+                          <span>
+                            {buyTokenInfo
+                              ? formatBalance(
+                                  fusionOrder?.takingAmount ||
+                                    intentWithLegacy.minAmountOut ||
+                                    "0",
+                                  buyTokenInfo.decimals
+                                )
+                              : "N/A"}{" "}
+                            {buyTokenInfo?.symbol}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">CHAINS:</span>
+                          <span>
+                            {fusionOrder?.srcChain || intentWithLegacy.chainIn}{" "}
+                            →{" "}
+                            {fusionOrder?.dstChain || intentWithLegacy.chainOut}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">STATUS:</span>
+                          <span
+                            className={`capitalize ${
+                              intent.status === "pending"
+                                ? "text-green-400"
+                                : intent.status === "filled"
+                                ? "text-blue-400"
+                                : "text-red-400"
+                            }`}
+                          >
+                            {intent.status}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
