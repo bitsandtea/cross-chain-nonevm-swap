@@ -48,6 +48,13 @@ interface IEscrowFactory {
      * @param taker The address of the taker.
      */
     event DstEscrowCreated(address escrow, bytes32 hashlock, Address taker);
+    /**
+     * @notice Emitted on EscrowSrc deployment via LOP integration.
+     * @param orderHash The hash of the LOP order.
+     * @param escrow The address of the created escrow.
+     * @param immutables The encoded immutables used for deployment.
+     */
+    event EscrowCreatedSrc(bytes32 indexed orderHash, address indexed escrow, bytes immutables);
 
     /* solhint-disable func-name-mixedcase */
     /// @notice Returns the address of implementation on the source chain.
@@ -64,6 +71,13 @@ interface IEscrowFactory {
      * @param srcCancellationTimestamp The start of the cancellation period for the source chain.
      */
     function createDstEscrow(IBaseEscrow.Immutables calldata dstImmutables, uint256 srcCancellationTimestamp) external payable;
+
+    /**
+     * @notice Creates a new escrow contract on the source chain via delegatecall from LOP postInteraction.
+     * @dev This function is called during LOP fillOrder execution.
+     * @param immutables The encoded immutables for the escrow contract.
+     */
+    function createSrcEscrow(bytes calldata immutables) external;
 
     /**
      * @notice Returns the deterministic address of the source escrow based on the salt.
