@@ -1,19 +1,19 @@
 #[test_only]
-module my_first_module::secret_relayer_tests {
+module cross_chain_escrow::secret_relayer_tests {
     use std::signer;
     use std::vector;
     use std::hash;
     use aptos_framework::timestamp;
 
-    use my_first_module::secret_relayer;
-    use my_first_module::escrow;
-    use my_first_module::dai_coin::{Self, DAI};
+    use cross_chain_escrow::secret_relayer;
+    use cross_chain_escrow::escrow;
+    use cross_chain_escrow::dai_coin::{Self, DAI};
 
     // Test constants
     const TEST_AMOUNT: u64 = 1000;
     const TEST_SAFETY_DEPOSIT: u64 = 100;
 
-    #[test(admin = @my_first_module, relayer = @0x123, maker = @0x456, taker = @0x789)]
+    #[test(admin = @cross_chain_escrow, relayer = @0x123, maker = @0x456, taker = @0x789)]
     public fun test_secret_sharing_with_local_validation(
         admin: &signer,
         relayer: &signer,
@@ -96,8 +96,8 @@ module my_first_module::secret_relayer_tests {
         // Test passed if no abort occurred - local escrow validation succeeded
     }
 
-    #[test(admin = @my_first_module, relayer = @0x123)]
-    #[expected_failure(abort_code = 1, location = my_first_module::secret_relayer)]
+    #[test(admin = @cross_chain_escrow, relayer = @0x123)]
+    #[expected_failure(abort_code = 1, location = cross_chain_escrow::secret_relayer)]
     public fun test_unauthorized_relayer_fails(admin: &signer, relayer: &signer) {
         // Setup
         secret_relayer::initialize(admin);
@@ -115,8 +115,8 @@ module my_first_module::secret_relayer_tests {
         );
     }
 
-    #[test(admin = @my_first_module, relayer = @0x123)]
-    #[expected_failure(abort_code = 1, location = my_first_module::secret_relayer)]
+    #[test(admin = @cross_chain_escrow, relayer = @0x123)]
+    #[expected_failure(abort_code = 1, location = cross_chain_escrow::secret_relayer)]
     public fun test_nonexistent_escrow_fails(admin: &signer, relayer: &signer) {
         // Test that secret sharing fails with non-existent escrow address
         
@@ -133,7 +133,7 @@ module my_first_module::secret_relayer_tests {
         );
     }
 
-    #[test(admin = @my_first_module)]
+    #[test(admin = @cross_chain_escrow)]
     public fun test_relayer_management(admin: &signer) {
         let relayer1 = @0x123;
         let relayer2 = @0x456;

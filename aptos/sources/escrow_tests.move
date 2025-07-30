@@ -1,9 +1,9 @@
 #[test_only]
-module my_first_module::escrow_tests {
+module cross_chain_escrow::escrow_tests {
     use std::vector;
     use std::hash;
     use aptos_std::bcs;
-    use my_first_module::escrow;
+    use cross_chain_escrow::escrow;
 
     // Simplified test just for timelock calculation since coin setup is complex
     #[test]

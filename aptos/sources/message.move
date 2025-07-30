@@ -1,4 +1,4 @@
-module my_first_module::message {
+module cross_chain_escrow::cross_chain_message {
     use std::string;
     use std::signer;
     use std::debug;  // Add this for debug prints

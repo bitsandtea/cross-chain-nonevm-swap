@@ -1,10 +1,10 @@
 [package]
-name = "cross_chain_escrow"
+name = "dai_coin_standalone"
 version = "1.0.0"
 authors = []
 
 [addresses]
-cross_chain_escrow = "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1"
+dai_coin_standalone = "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1"
 
 [dev-addresses]
 

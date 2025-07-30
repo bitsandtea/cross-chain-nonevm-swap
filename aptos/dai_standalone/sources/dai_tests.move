@@ -1,11 +1,11 @@
 #[test_only]
-module my_first_module::dai_tests {
+module dai_coin_standalone::dai_tests {
     use std::signer;
     use aptos_framework::coin;
     use aptos_framework::aptos_coin;
-    use my_first_module::dai_coin::{Self, DAI};
+    use dai_coin_standalone::dai_coin::{Self, DAI};
 
-    #[test(aptos_framework = @0x1, admin = @my_first_module)]
+    #[test(aptos_framework = @0x1, admin = @dai_coin_standalone)]
     public fun test_dai_initialize(aptos_framework: &signer, admin: &signer) {
         // Initialize coin conversion map for testing
         aptos_coin::ensure_initialized_with_apt_fa_metadata_for_test();
@@ -20,7 +20,7 @@ module my_first_module::dai_tests {
         assert!(coin::is_account_registered<DAI>(signer::address_of(admin)), 1);
     }
 
-    #[test(aptos_framework = @0x1, admin = @my_first_module, user = @0x123)]
+    #[test(aptos_framework = @0x1, admin = @dai_coin_standalone, user = @0x123)]
     public fun test_dai_mint_and_burn(aptos_framework: &signer, admin: &signer, user: &signer) {
         // Initialize coin conversion map for testing
         aptos_coin::ensure_initialized_with_apt_fa_metadata_for_test();
@@ -50,7 +50,7 @@ module my_first_module::dai_tests {
         assert!(coin::balance<DAI>(user_addr) == mint_amount - burn_amount, 3);
     }
 
-    #[test(aptos_framework = @0x1, admin = @my_first_module, user1 = @0x123, user2 = @0x456)]
+    #[test(aptos_framework = @0x1, admin = @dai_coin_standalone, user1 = @0x123, user2 = @0x456)]
     public fun test_dai_transfer(aptos_framework: &signer, admin: &signer, user1: &signer, user2: &signer) {
         // Initialize coin conversion map for testing
         aptos_coin::ensure_initialized_with_apt_fa_metadata_for_test();
@@ -78,7 +78,7 @@ module my_first_module::dai_tests {
         assert!(coin::balance<DAI>(user2_addr) == transfer_amount, 5);
     }
 
-    #[test(aptos_framework = @0x1, admin = @my_first_module)]
+    #[test(aptos_framework = @0x1, admin = @dai_coin_standalone)]
     #[expected_failure(abort_code = 0x80002, location = aptos_framework::coin)]
     public fun test_dai_double_initialize_fails(aptos_framework: &signer, admin: &signer) {
         // Initialize coin conversion map for testing
@@ -91,7 +91,7 @@ module my_first_module::dai_tests {
         dai_coin::initialize(admin);
     }
 
-    #[test(aptos_framework = @0x1, admin = @my_first_module, user = @0x123)]
+    #[test(aptos_framework = @0x1, admin = @dai_coin_standalone, user = @0x123)]
     public fun test_dai_supply_tracking(aptos_framework: &signer, admin: &signer, user: &signer) {
         // Initialize coin conversion map for testing
         aptos_coin::ensure_initialized_with_apt_fa_metadata_for_test();

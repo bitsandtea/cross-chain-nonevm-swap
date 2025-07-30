@@ -1,4 +1,4 @@
-module my_first_module::dai_coin {
+module dai_coin_standalone::dai_coin {
     use std::option;
     use aptos_framework::managed_coin;
     use aptos_framework::coin;

@@ -1,4 +1,4 @@
-module my_first_module::escrow {
+module cross_chain_escrow::escrow {
     use std::signer;
     use std::vector;
     use std::event;

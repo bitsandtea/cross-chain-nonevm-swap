@@ -1,9 +1,9 @@
-module my_first_module::secret_relayer {
+module cross_chain_escrow::secret_relayer {
     use std::signer;
     use std::event;
     use std::vector;
     use aptos_framework::timestamp;
-    use my_first_module::escrow;
+    use cross_chain_escrow::escrow;
 
     /// Error codes
     const E_UNAUTHORIZED: u64 = 1;

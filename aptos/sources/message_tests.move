@@ -1,9 +1,9 @@
 #[test_only]
-module my_first_module::message_tests {
+module cross_chain_escrow::cross_chain_message_tests {
     use std::string;
     use std::signer;
     use aptos_framework::account;
-    use my_first_module::message;
+    use cross_chain_escrow::cross_chain_message;
 
     #[test]
     fun test_set_and_get_message() {
