@@ -16,8 +16,6 @@ import { Timelocks, TimelocksLib } from "./libraries/TimelocksLib.sol";
 /**
  * @title Production Resolver contract for Fusion+ cross-chain swaps
  * @notice Integrates with 1inch LOP to atomically execute swaps and deploy escrows
- * @dev Replaces ResolverExample with production-ready LOP integration
- * @custom:security-contact security@1inch.io
  */
 contract Resolver is Ownable {
     using TakerTraitsLib for TakerTraits;
@@ -26,7 +24,7 @@ contract Resolver is Ownable {
     IEscrowFactory private immutable _FACTORY;
     IOrderMixin private immutable _LOP;
 
-    error InsufficientSafetyDeposit();
+    error InsufficientSafetyDeposit(); 
     error LengthMismatch();
 
     /**

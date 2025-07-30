@@ -33,7 +33,7 @@ async function main() {
 
   // Constructor parameters for EscrowFactory
   // Using zero address for limitOrderProtocol since we're not using 1inch LOP
-  const limitOrderProtocol = "0x0000000000000000000000000000000000000000"; // Zero address - not using 1inch LOP
+  const limitOrderProtocol = "0x111111125421ca6dc452d289314280a0f8842a65"; // Zero address - not using 1inch LOP
   const feeToken = oneInchToken.address; // Use 1INCH as fee token
   const accessToken = oneInchToken.address; // Use 1INCH as access token
   const owner = deployer.account.address; // Deployer as initial owner
