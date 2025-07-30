@@ -15,14 +15,14 @@ export interface TokenMapping {
 export const TOKEN_MAPPINGS: TokenMapping[] = [
   // Ethereum testnet tokens
   {
-    testnetAddress: "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512",
+    testnetAddress: process.env.NEXT_PUBLIC_USDC_ADDRESS || "",
     mainnetAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC mainnet
     symbol: "USDC",
     decimals: 6,
     chainId: 1,
   },
   {
-    testnetAddress: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    testnetAddress: process.env.NEXT_PUBLIC_WETH_ADDRESS || "",
     mainnetAddress: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH mainnet
     symbol: "WETH",
     decimals: 18,
@@ -97,4 +97,22 @@ export function isTokenMapped(
       m.testnetAddress.toLowerCase() === testnetAddress.toLowerCase() &&
       m.chainId === chainId
   );
+}
+
+/**
+ * Get token decimals synchronously from static mapping
+ * This function is copied from relayer/src/lib/tokenUtils.ts
+ */
+export function getTokenDecimalsSync(tokenAddress: string): number | null {
+  // First try to find by testnet address
+  const mapping = TOKEN_MAPPINGS.find(
+    (m) => m.testnetAddress.toLowerCase() === tokenAddress.toLowerCase()
+  );
+
+  if (mapping) {
+    return mapping.decimals;
+  }
+
+  // If not found, return null (caller should handle fallback)
+  return null;
 }

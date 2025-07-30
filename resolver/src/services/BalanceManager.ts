@@ -385,8 +385,25 @@ export class BalanceManager {
         this.evmProvider
       );
 
+      console.log("checking balance token", tokenAddress);
+      console.log("for user", this.evmWallet.address);
       const balance = await tokenContract.balanceOf(this.evmWallet.address);
-      return formatEthAmount(balance.toString());
+      console.log("balance", balance.toString());
+
+      // Get token decimals for proper formatting
+      const { getTokenDecimalsSync } = require("../lib/tokenMapping");
+      const tokenDecimals = getTokenDecimalsSync(tokenAddress) || 18;
+
+      // Format with correct decimals
+      const formattedBalance = ethers.formatUnits(balance, tokenDecimals);
+      console.log(
+        "formatted balance with",
+        tokenDecimals,
+        "decimals:",
+        formattedBalance
+      );
+
+      return formattedBalance;
     } catch (error) {
       this.logger.error(
         "Failed to get token balance:",

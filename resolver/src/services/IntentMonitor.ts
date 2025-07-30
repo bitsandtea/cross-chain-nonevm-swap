@@ -220,6 +220,40 @@ export class IntentMonitor extends EventEmitter {
   }
 
   /**
+   * Get intent by ID from the relayer
+   */
+  async getIntentById(intentId: string): Promise<Intent | null> {
+    try {
+      const response = await axios.get(
+        `${this.config.relayerApiUrl}/api/intents/${intentId}`,
+        {
+          timeout: 5000,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.config.resolverApiKey}`,
+          },
+        }
+      );
+
+      if (response.status === 404) {
+        return null;
+      }
+
+      if (response.status !== 200) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+
+      return this.validateIntent(response.data.intent);
+    } catch (error) {
+      this.logger.error(
+        `Failed to get intent ${intentId}:`,
+        extractErrorMessage(error)
+      );
+      return null;
+    }
+  }
+
+  /**
    * Update intent status in the relayer
    */
   async updateIntentStatus(
@@ -230,8 +264,6 @@ export class IntentMonitor extends EventEmitter {
     try {
       await retryAsync(
         async () => {
-          console.log(`🔧 [IntentMonitor] Making PATCH request...`);
-
           try {
             const response = await axios.patch(
               `${this.config.relayerApiUrl}/api/intents/${intentId}`,
@@ -247,11 +279,6 @@ export class IntentMonitor extends EventEmitter {
                 },
               }
             );
-
-            console.log(
-              `🔧 [IntentMonitor] Response status: ${response.status}`
-            );
-            console.log(`🔧 [IntentMonitor] Response data:`, response.data);
 
             if (response.status !== 200) {
               throw new Error(

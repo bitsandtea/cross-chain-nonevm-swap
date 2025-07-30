@@ -7,7 +7,7 @@ import {
   AllowanceState,
   approveTokenAllowance,
   checkTokenAllowance,
-  parseTokenAmount,
+  parseTokenAmountWithDecimals,
 } from "./tokenUtils";
 import {
   FUSION_ORDER_TYPE,
@@ -193,26 +193,16 @@ export class IntentFlowManager {
       let makingAmountParsed: bigint;
       let takingAmountParsed: bigint;
 
-      // Only use parseTokenAmount for Ethereum tokens (chain 1)
-      if (formData.chainIn === 1) {
-        makingAmountParsed = await parseTokenAmount(
-          formData.sellAmount,
-          formData.sellToken
-        );
-      } else {
-        // For non-Ethereum chains, use parseEther as fallback (assuming 18 decimals)
-        makingAmountParsed = ethers.parseEther(formData.sellAmount);
-      }
+      // Use parseTokenAmountWithDecimals for all tokens to handle correct decimals
+      makingAmountParsed = await parseTokenAmountWithDecimals(
+        formData.sellAmount,
+        formData.sellToken
+      );
 
-      if (formData.chainOut === 1) {
-        takingAmountParsed = await parseTokenAmount(
-          formData.minBuyAmount,
-          formData.buyToken
-        );
-      } else {
-        // For non-Ethereum chains, use parseEther as fallback (assuming 18 decimals)
-        takingAmountParsed = ethers.parseEther(formData.minBuyAmount);
-      }
+      takingAmountParsed = await parseTokenAmountWithDecimals(
+        formData.minBuyAmount,
+        formData.buyToken
+      );
 
       // Calculate Dutch auction prices if needed
       let startRate = "0";

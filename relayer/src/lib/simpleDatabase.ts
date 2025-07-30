@@ -54,7 +54,7 @@ class SimpleDatabaseService {
   private data: DatabaseSchema;
 
   constructor() {
-    this.dbPath = path.join(process.cwd(), "escrow-db.json");
+    this.dbPath = path.join(process.cwd(), "db", "escrow.json");
     this.data = { ...defaultData };
   }
 

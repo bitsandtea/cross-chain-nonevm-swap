@@ -25,7 +25,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast, Toaster } from "react-hot-toast";
 
 // Custom Cyberpunk Dropdown Component
@@ -99,6 +99,72 @@ function CyberpunkDropdown({
         </Transition>
       </div>
     </Listbox>
+  );
+}
+
+// Countdown Timer Component
+interface CountdownTimerProps {
+  expiration: number;
+  className?: string;
+}
+
+function CountdownTimer({ expiration, className = "" }: CountdownTimerProps) {
+  const [timeLeft, setTimeLeft] = useState<{
+    days: number;
+    hours: number;
+    minutes: number;
+    seconds: number;
+    isExpired: boolean;
+  }>({ days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: false });
+
+  const calculateTimeLeft = useCallback(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const diff = expiration - now;
+
+    if (diff <= 0) {
+      setTimeLeft({
+        days: 0,
+        hours: 0,
+        minutes: 0,
+        seconds: 0,
+        isExpired: true,
+      });
+      return;
+    }
+
+    const days = Math.floor(diff / (24 * 60 * 60));
+    const hours = Math.floor((diff % (24 * 60 * 60)) / (60 * 60));
+    const minutes = Math.floor((diff % (60 * 60)) / 60);
+    const seconds = diff % 60;
+
+    setTimeLeft({ days, hours, minutes, seconds, isExpired: false });
+  }, [expiration]);
+
+  useEffect(() => {
+    calculateTimeLeft();
+    const timer = setInterval(calculateTimeLeft, 1000);
+    return () => clearInterval(timer);
+  }, [calculateTimeLeft]);
+
+  if (timeLeft.isExpired) {
+    return (
+      <div className={`flex items-center space-x-2 ${className}`}>
+        <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse"></div>
+        <span className="text-red-400 font-mono text-sm">EXPIRED</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex items-center space-x-2 ${className}`}>
+      <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+      <span className="text-green-400 font-mono text-sm">
+        {timeLeft.days > 0 && `${timeLeft.days}d `}
+        {timeLeft.hours.toString().padStart(2, "0")}:
+        {timeLeft.minutes.toString().padStart(2, "0")}:
+        {timeLeft.seconds.toString().padStart(2, "0")}
+      </span>
+    </div>
   );
 }
 
@@ -221,14 +287,48 @@ export default function Home() {
     }
   };
 
-  // Load user balances (simplified - would need proper implementation)
+  // Load user balances
   const loadUserBalances = async (address: string) => {
     if (!address) return;
 
     setLoadingStates((prev) => ({ ...prev, balances: true }));
     try {
-      // This would need proper implementation with balance service
+      // Only fetch balance for the selected sell token
       const balances: UserBalance = {};
+
+      if (formData.sellToken) {
+        const selectedToken = availableTokens.find(
+          (token) => token.address === formData.sellToken
+        );
+
+        if (selectedToken && selectedToken.chainId === 1) {
+          // Ethereum tokens
+          try {
+            const response = await fetch(
+              `/api/balances?address=${address}&token=${selectedToken.address}`
+            );
+            if (response.ok) {
+              const data = await response.json();
+              balances[selectedToken.address.toLowerCase()] =
+                data.balance || "0";
+            } else {
+              console.error(
+                `Failed to load balance for ${selectedToken.symbol}:`,
+                response.statusText
+              );
+              balances[selectedToken.address.toLowerCase()] = "0";
+            }
+          } catch (error) {
+            console.error(
+              `Failed to load balance for ${selectedToken.symbol}:`,
+              error
+            );
+            balances[selectedToken.address.toLowerCase()] = "0";
+          }
+        }
+        // TODO: Add Aptos balance fetching when API is ready
+      }
+
       setUserBalances(balances);
     } catch (error) {
       console.error("Failed to load balances:", error);
@@ -283,7 +383,7 @@ export default function Home() {
     }, 10000); // Refresh every 10 seconds
 
     return () => clearInterval(interval);
-  }, [account]);
+  }, [account, formData.sellToken]);
 
   // Auto-check allowances when form data changes
   useEffect(() => {
@@ -452,7 +552,9 @@ export default function Home() {
   // Format balance for display
   const formatBalance = (balance: string, decimals: number): string => {
     try {
-      const formatted = parseFloat(ethers.formatUnits(balance, decimals));
+      // Ensure balance is treated as a BigInt string
+      const balanceBigInt = BigInt(balance);
+      const formatted = parseFloat(ethers.formatUnits(balanceBigInt, decimals));
       return formatted.toFixed(4);
     } catch {
       return "0.0000";
@@ -1018,7 +1120,32 @@ export default function Home() {
                   </div>
 
                   {/* Allowance Details */}
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* Current Balance */}
+                    <div className="p-3 bg-green-900/10 border border-green-400/20 rounded-lg">
+                      <div className="text-xs font-mono text-green-400 mb-1">
+                        CURRENT_BALANCE
+                      </div>
+                      <div className="font-mono text-green-300 text-sm">
+                        {(() => {
+                          const sellTokenInfo = getTokenInfoForChain(
+                            formData.sellToken,
+                            formData.chainIn
+                          );
+                          const balance =
+                            userBalances[formData.sellToken.toLowerCase()] ||
+                            "0";
+                          return sellTokenInfo
+                            ? ethers.formatUnits(
+                                balance,
+                                sellTokenInfo.decimals
+                              ) +
+                                " " +
+                                sellTokenInfo.symbol
+                            : ethers.formatEther(balance) + " ETH";
+                        })()}
+                      </div>
+                    </div>
                     {/* Current Allowance */}
                     <div className="p-3 bg-cyan-900/10 border border-cyan-400/20 rounded-lg">
                       <div className="text-xs font-mono text-cyan-400 mb-1">
@@ -1070,53 +1197,120 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* Progress Bar */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs font-mono">
-                      <span className="text-gray-400">APPROVAL_PROGRESS</span>
-                      <span
-                        className={`${
-                          allowanceState.hasEnoughAllowance
-                            ? "text-green-400"
-                            : "text-orange-400"
-                        }`}
-                      >
-                        {allowanceState.hasEnoughAllowance
-                          ? "100%"
-                          : Math.min(
-                              100,
-                              Number(
-                                (allowanceState.currentAllowance *
-                                  BigInt(100)) /
-                                  (allowanceState.requiredAmount || BigInt(1))
-                              )
-                            ).toFixed(0)}
-                        %
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
-                      <div
-                        className={`h-full transition-all duration-500 ${
-                          allowanceState.hasEnoughAllowance
-                            ? "bg-gradient-to-r from-green-500 to-emerald-400"
-                            : "bg-gradient-to-r from-orange-500 to-red-400"
-                        }`}
-                        style={{
-                          width: `${
+                  {/* Balance and Allowance Status */}
+                  <div className="space-y-3">
+                    {/* Balance Status */}
+                    {(() => {
+                      const sellTokenInfo = getTokenInfoForChain(
+                        formData.sellToken,
+                        formData.chainIn
+                      );
+                      const balance =
+                        userBalances[formData.sellToken.toLowerCase()] || "0";
+                      const hasEnoughBalance =
+                        BigInt(balance) >=
+                        BigInt(
+                          ethers.parseUnits(
+                            formData.sellAmount || "0",
+                            sellTokenInfo?.decimals || 18
+                          )
+                        );
+
+                      return (
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs font-mono">
+                            <span className="text-gray-400">
+                              BALANCE_STATUS
+                            </span>
+                            <span
+                              className={`${
+                                hasEnoughBalance
+                                  ? "text-green-400"
+                                  : "text-red-400"
+                              }`}
+                            >
+                              {hasEnoughBalance ? "SUFFICIENT" : "INSUFFICIENT"}
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-500 ${
+                                hasEnoughBalance
+                                  ? "bg-gradient-to-r from-green-500 to-emerald-400"
+                                  : "bg-gradient-to-r from-red-500 to-orange-400"
+                              }`}
+                              style={{
+                                width: `${
+                                  hasEnoughBalance
+                                    ? 100
+                                    : Math.min(
+                                        100,
+                                        Number(
+                                          (BigInt(balance) * BigInt(100)) /
+                                            (BigInt(
+                                              ethers.parseUnits(
+                                                formData.sellAmount || "0",
+                                                sellTokenInfo?.decimals || 18
+                                              )
+                                            ) || BigInt(1))
+                                        )
+                                      )
+                                }%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Allowance Progress Bar */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs font-mono">
+                        <span className="text-gray-400">APPROVAL_PROGRESS</span>
+                        <span
+                          className={`${
                             allowanceState.hasEnoughAllowance
-                              ? 100
-                              : Math.min(
-                                  100,
-                                  Number(
-                                    (allowanceState.currentAllowance *
-                                      BigInt(100)) /
-                                      (allowanceState.requiredAmount ||
-                                        BigInt(1))
-                                  )
+                              ? "text-green-400"
+                              : "text-orange-400"
+                          }`}
+                        >
+                          {allowanceState.hasEnoughAllowance
+                            ? "100%"
+                            : Math.min(
+                                100,
+                                Number(
+                                  (allowanceState.currentAllowance *
+                                    BigInt(100)) /
+                                    (allowanceState.requiredAmount || BigInt(1))
                                 )
-                          }%`,
-                        }}
-                      />
+                              ).toFixed(0)}
+                          %
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-500 ${
+                            allowanceState.hasEnoughAllowance
+                              ? "bg-gradient-to-r from-green-500 to-emerald-400"
+                              : "bg-gradient-to-r from-orange-500 to-red-400"
+                          }`}
+                          style={{
+                            width: `${
+                              allowanceState.hasEnoughAllowance
+                                ? 100
+                                : Math.min(
+                                    100,
+                                    Number(
+                                      (allowanceState.currentAllowance *
+                                        BigInt(100)) /
+                                        (allowanceState.requiredAmount ||
+                                          BigInt(1))
+                                    )
+                                  )
+                            }%`,
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -1510,6 +1704,24 @@ export default function Home() {
                             {intent.status}
                           </span>
                         </div>
+                        {fusionOrder?.expiration ? (
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400">EXPIRES:</span>
+                            <CountdownTimer
+                              expiration={parseInt(
+                                fusionOrder.expiration.toString()
+                              )}
+                              className="ml-2"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400">EXPIRES:</span>
+                            <span className="text-gray-500 font-mono text-sm">
+                              UNKNOWN
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

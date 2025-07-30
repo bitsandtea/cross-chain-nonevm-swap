@@ -131,7 +131,34 @@ export async function PATCH(
 ) {
   try {
     const { id: intentId } = await params;
-    const body = await req.json();
+
+    // Check if request has content
+    const contentType = req.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      return NextResponse.json(
+        { error: "Content-Type must be application/json" },
+        { status: 400 }
+      );
+    }
+
+    // Get request body with better error handling
+    let body;
+    try {
+      const text = await req.text();
+      if (!text || text.trim() === "") {
+        return NextResponse.json(
+          { error: "Request body is empty" },
+          { status: 400 }
+        );
+      }
+      body = JSON.parse(text);
+    } catch (parseError) {
+      console.error("JSON parse error:", parseError);
+      return NextResponse.json(
+        { error: "Invalid JSON in request body" },
+        { status: 400 }
+      );
+    }
 
     if (!body.status) {
       return NextResponse.json({ error: "Missing status" }, { status: 400 });
