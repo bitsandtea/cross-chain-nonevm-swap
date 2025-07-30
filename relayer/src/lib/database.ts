@@ -8,11 +8,19 @@ export const db = new Low(adapter, {
   intents: [],
   whitelist: [],
   nonces: {},
+  secrets: [],
 });
 
 export async function initializeDatabase() {
   try {
     await db.read();
+
+    // Log successful database load with nonce count
+    const nonceCount = db.data?.nonces ? Object.keys(db.data.nonces).length : 0;
+    const intentCount = db.data?.intents?.length || 0;
+    console.log(
+      `📊 Database loaded: ${intentCount} intents, ${nonceCount} user nonces`
+    );
   } catch (error) {
     // Handle empty or corrupted database file
     console.warn(
@@ -23,8 +31,10 @@ export async function initializeDatabase() {
       intents: [],
       whitelist: [],
       nonces: {},
+      secrets: [],
     };
     await db.write();
+    console.log("📊 New database created");
     return;
   }
 
@@ -34,7 +44,15 @@ export async function initializeDatabase() {
       intents: [],
       whitelist: [],
       nonces: {},
+      secrets: [],
     };
+    await db.write();
+    console.log("📊 Database initialized with default data");
+  }
+
+  // Ensure secrets array exists for existing databases
+  if (!db.data.secrets) {
+    db.data.secrets = [];
     await db.write();
   }
 }
@@ -56,12 +74,32 @@ export function isResolverWhitelisted(resolverAddress: string): boolean {
 }
 
 export function getUserNonce(userAddress: string): number {
-  return db.data!.nonces[userAddress.toLowerCase()] || 0;
+  if (!db.data?.nonces) {
+    console.warn("⚠️ Database not initialized, returning nonce 0");
+    return 0;
+  }
+  const nonce = db.data.nonces[userAddress.toLowerCase()] || 0;
+  console.log(
+    `🔢 User ${userAddress.slice(0, 6)}...${userAddress.slice(
+      -4
+    )} current nonce: ${nonce}`
+  );
+  return nonce;
 }
 
 export function incrementUserNonce(userAddress: string): void {
+  if (!db.data?.nonces) {
+    console.error("❌ Cannot increment nonce: database not initialized");
+    return;
+  }
   const current = getUserNonce(userAddress);
-  db.data!.nonces[userAddress.toLowerCase()] = current + 1;
+  const newNonce = current + 1;
+  db.data.nonces[userAddress.toLowerCase()] = newNonce;
+  console.log(
+    `🔢 User ${userAddress.slice(0, 6)}...${userAddress.slice(
+      -4
+    )} nonce incremented to: ${newNonce}`
+  );
 }
 
 export async function saveDatabase() {

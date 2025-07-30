@@ -44,3 +44,5 @@ next-env.d.ts
 escrow-db.json
 
 db/*
+dist/*
+docs/*

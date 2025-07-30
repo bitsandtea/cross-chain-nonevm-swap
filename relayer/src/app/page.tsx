@@ -10,6 +10,8 @@ import {
 import { getAllTokens, TokenMapping } from "@/lib/tokenMapping";
 import { AllowanceState } from "@/lib/tokenUtils";
 import { CANCEL_TYPE, FusionPlusIntent } from "@/lib/types";
+import { Listbox, Transition } from "@headlessui/react";
+import { ChevronDownIcon } from "@heroicons/react/20/solid";
 import { ethers } from "ethers";
 import {
   Activity,
@@ -23,8 +25,82 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { toast, Toaster } from "react-hot-toast";
+
+// Custom Cyberpunk Dropdown Component
+interface DropdownOption {
+  value: string | number;
+  label: string;
+}
+
+interface CyberpunkDropdownProps {
+  value: string | number;
+  onChange: (value: string | number) => void;
+  options: DropdownOption[];
+  placeholder?: string;
+  className?: string;
+}
+
+function CyberpunkDropdown({
+  value,
+  onChange,
+  options,
+  placeholder = "Select...",
+  className = "",
+}: CyberpunkDropdownProps) {
+  const selectedOption = options.find((option) => option.value === value);
+
+  return (
+    <Listbox value={value} onChange={onChange}>
+      <div className={`relative ${className}`}>
+        <Listbox.Button className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm text-left cursor-pointer hover:border-gray-500/50">
+          <span className="block truncate">
+            {selectedOption ? selectedOption.label : placeholder}
+          </span>
+          <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
+            <ChevronDownIcon
+              className="h-5 w-5 text-cyan-400"
+              aria-hidden="true"
+            />
+          </span>
+        </Listbox.Button>
+        <Transition
+          as={Fragment}
+          leave="transition ease-in duration-100"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+        >
+          <Listbox.Options className="absolute z-50 mt-2 max-h-60 w-full overflow-auto rounded-xl bg-gray-900/95 border-2 border-cyan-400/50 backdrop-blur-xl shadow-lg shadow-cyan-400/30 focus:outline-none text-sm font-mono">
+            {options.map((option) => (
+              <Listbox.Option
+                key={option.value}
+                className={({ active }) =>
+                  `relative cursor-pointer select-none py-3 px-4 transition-all duration-200 ${
+                    active
+                      ? "bg-cyan-400/20 text-cyan-300 shadow-lg shadow-cyan-400/20"
+                      : "text-gray-300 hover:bg-gray-800/50"
+                  }`
+                }
+                value={option.value}
+              >
+                {({ selected }) => (
+                  <span
+                    className={`block truncate ${
+                      selected ? "font-bold text-cyan-300" : "font-normal"
+                    }`}
+                  >
+                    {option.label}
+                  </span>
+                )}
+              </Listbox.Option>
+            ))}
+          </Listbox.Options>
+        </Transition>
+      </div>
+    </Listbox>
+  );
+}
 
 // TypeScript declarations for ethereum
 declare global {
@@ -80,6 +156,9 @@ export default function Home() {
     prices: false,
   });
   const [activeTab, setActiveTab] = useState<"create" | "orders">("create");
+  const [orderFilter, setOrderFilter] = useState<
+    "active" | "expired" | "filled" | "cancelled" | "all"
+  >("active");
 
   // Flow management
   const [currentStep, setCurrentStep] = useState<FlowStep>(FlowStep.FORM);
@@ -391,6 +470,30 @@ export default function Home() {
     }
   };
 
+  // Filter intents based on selected filter
+  const getFilteredIntents = () => {
+    const now = Math.floor(Date.now() / 1000);
+
+    return intents.filter((intent) => {
+      switch (orderFilter) {
+        case "active":
+          return intent.status === "pending";
+        case "expired":
+          // Check if expiration has passed
+          const expiration = intent.fusionOrder?.expiration;
+          return expiration && parseInt(expiration.toString()) < now;
+        case "filled":
+          return intent.status === "filled" || intent.status === "completed";
+        case "cancelled":
+          return intent.status === "cancelled";
+        case "all":
+          return true;
+        default:
+          return true;
+      }
+    });
+  };
+
   return (
     <div className="min-h-screen bg-black text-white relative overflow-hidden">
       {/* Enhanced background effects */}
@@ -486,7 +589,7 @@ export default function Home() {
 
         {/* Enhanced Tab Navigation */}
         <div className="mb-8">
-          <div className="flex space-x-2 border-b border-purple-400/30">
+          <div className="flex space-x-2 border-b border-purple-400/30 justify-center">
             <button
               onClick={() => setActiveTab("create")}
               className={`px-6 py-4 font-mono text-sm transition-all duration-300 border-b-2 ${
@@ -510,7 +613,7 @@ export default function Home() {
             >
               <div className="flex items-center space-x-2">
                 <Activity className="w-4 h-4" />
-                <span>ACTIVE_ORDERS</span>
+                <span>ORDERS</span>
                 <span className="text-xs bg-purple-900/50 px-2 py-1 rounded-full">
                   {intents.length}
                 </span>
@@ -521,13 +624,38 @@ export default function Home() {
 
         {/* Tab Content */}
         {activeTab === "create" && (
-          <div className="w-3/5 mx-auto bg-black/90 backdrop-blur-xl border-2 border-purple-400/40 rounded-2xl p-8 shadow-2xl shadow-purple-500/20">
+          <div className="w-3/5 mx-auto bg-black/90 backdrop-blur-xl border-2 border-purple-400/40 rounded-2xl p-8 shadow-2xl shadow-purple-500/20 relative">
             <div className="flex items-center mb-8">
               <Target className="w-6 h-6 text-purple-400 mr-4" />
               <h2 className="text-2xl font-mono text-purple-300 tracking-wide">
                 FUSION_ORDER_MATRIX
               </h2>
             </div>
+
+            {/* Disconnect Overlay */}
+            {!isConnected && (
+              <div className="absolute inset-0 bg-black/95 backdrop-blur-xl rounded-2xl flex items-center justify-center z-10">
+                <div className="text-center p-8">
+                  <div className="mb-6">
+                    <WifiOff className="w-16 h-16 text-yellow-400 mx-auto animate-pulse" />
+                  </div>
+                  <h3 className="text-2xl font-mono text-yellow-300 mb-4 tracking-wide">
+                    NEURAL_LINK_REQUIRED
+                  </h3>
+                  <p className="text-yellow-400/80 font-mono text-sm mb-8 max-w-md mx-auto leading-relaxed">
+                    &gt; Connect your brain wallet to access the Fusion Order
+                    Matrix
+                  </p>
+                  <button
+                    onClick={connectWallet}
+                    className="flex items-center px-8 py-4 bg-gradient-to-r from-yellow-600/30 to-orange-600/30 border-2 border-yellow-400/50 rounded-xl hover:border-yellow-400/80 transition-all duration-300 font-mono text-yellow-200 hover:text-white transform hover:scale-105 shadow-lg hover:shadow-yellow-500/50 mx-auto"
+                  >
+                    <Wallet className="w-5 h-5 mr-3" />
+                    ESTABLISH_NEURAL_LINK
+                  </button>
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-8">
               {/* Chain Selection */}
@@ -536,37 +664,39 @@ export default function Home() {
                   <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
                     SOURCE_CHAIN
                   </label>
-                  <select
+                  <CyberpunkDropdown
                     value={formData.chainIn}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setFormData({
                         ...formData,
-                        chainIn: parseInt(e.target.value),
+                        chainIn: parseInt(value.toString()),
                       })
                     }
-                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
-                  >
-                    <option value={1}>ETHEREUM_MAINNET</option>
-                    <option value={1000}>APTOS_NETWORK</option>
-                  </select>
+                    options={[
+                      { value: 1, label: "ETHEREUM_MAINNET" },
+                      { value: 1000, label: "APTOS_NETWORK" },
+                    ]}
+                    placeholder="SELECT_CHAIN"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
                     DEST_CHAIN
                   </label>
-                  <select
+                  <CyberpunkDropdown
                     value={formData.chainOut}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setFormData({
                         ...formData,
-                        chainOut: parseInt(e.target.value),
+                        chainOut: parseInt(value.toString()),
                       })
                     }
-                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
-                  >
-                    <option value={1}>ETHEREUM_MAINNET</option>
-                    <option value={1000}>APTOS_NETWORK</option>
-                  </select>
+                    options={[
+                      { value: 1, label: "ETHEREUM_MAINNET" },
+                      { value: 1000, label: "APTOS_NETWORK" },
+                    ]}
+                    placeholder="SELECT_CHAIN"
+                  />
                 </div>
               </div>
 
@@ -576,43 +706,43 @@ export default function Home() {
                   <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
                     SELL_TOKEN
                   </label>
-                  <select
+                  <CyberpunkDropdown
                     value={formData.sellToken}
-                    onChange={(e) =>
-                      setFormData({ ...formData, sellToken: e.target.value })
+                    onChange={(value) =>
+                      setFormData({ ...formData, sellToken: value.toString() })
                     }
-                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
-                  >
-                    <option value="">SELECT_TOKEN</option>
-                    {availableTokens
-                      .filter((token) => token.chainId === formData.chainIn)
-                      .map((token) => (
-                        <option key={token.address} value={token.address}>
-                          {token.symbol}
-                        </option>
-                      ))}
-                  </select>
+                    options={[
+                      { value: "", label: "SELECT_TOKEN" },
+                      ...availableTokens
+                        .filter((token) => token.chainId === formData.chainIn)
+                        .map((token) => ({
+                          value: token.address,
+                          label: token.symbol,
+                        })),
+                    ]}
+                    placeholder="SELECT_TOKEN"
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-mono text-cyan-300 mb-3 tracking-wide">
                     BUY_TOKEN
                   </label>
-                  <select
+                  <CyberpunkDropdown
                     value={formData.buyToken}
-                    onChange={(e) =>
-                      setFormData({ ...formData, buyToken: e.target.value })
+                    onChange={(value) =>
+                      setFormData({ ...formData, buyToken: value.toString() })
                     }
-                    className="w-full p-4 bg-gray-900/70 border-2 border-gray-600/50 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:shadow-lg focus:shadow-cyan-400/30 transition-all backdrop-blur-sm"
-                  >
-                    <option value="">SELECT_TOKEN</option>
-                    {availableTokens
-                      .filter((token) => token.chainId === formData.chainOut)
-                      .map((token) => (
-                        <option key={token.address} value={token.address}>
-                          {token.symbol}
-                        </option>
-                      ))}
-                  </select>
+                    options={[
+                      { value: "", label: "SELECT_TOKEN" },
+                      ...availableTokens
+                        .filter((token) => token.chainId === formData.chainOut)
+                        .map((token) => ({
+                          value: token.address,
+                          label: token.symbol,
+                        })),
+                    ]}
+                    placeholder="SELECT_TOKEN"
+                  />
                 </div>
               </div>
 
@@ -1151,19 +1281,75 @@ export default function Home() {
 
         {activeTab === "orders" && (
           <div className="w-3/5 mx-auto bg-black/90 backdrop-blur-xl border-2 border-cyan-400/40 rounded-2xl p-8 shadow-2xl shadow-cyan-500/20">
-            <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center justify-between mb-6">
               <div className="flex items-center">
                 <Activity className="w-6 h-6 text-cyan-400 mr-4" />
                 <h2 className="text-2xl font-mono text-cyan-300 tracking-wide">
-                  ACTIVE_ORDERS_MATRIX
+                  ORDERS_MATRIX
                 </h2>
               </div>
               <div className="text-sm font-mono text-cyan-400 bg-cyan-400/10 px-4 py-2 rounded-xl border border-cyan-400/30">
-                {intents.length} TOTAL
+                {getFilteredIntents().length} / {intents.length} TOTAL
               </div>
             </div>
 
-            <div className="space-y-6 max-h-96 overflow-y-auto">
+            {/* Filter Buttons */}
+            <div className="mb-6">
+              <div className="flex flex-wrap gap-2 justify-center">
+                <button
+                  onClick={() => setOrderFilter("active")}
+                  className={`px-4 py-2 font-mono text-sm transition-all duration-300 border rounded-lg ${
+                    orderFilter === "active"
+                      ? "bg-green-500/20 border-green-400 text-green-300 shadow-lg shadow-green-400/30"
+                      : "bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  ACTIVE
+                </button>
+                <button
+                  onClick={() => setOrderFilter("filled")}
+                  className={`px-4 py-2 font-mono text-sm transition-all duration-300 border rounded-lg ${
+                    orderFilter === "filled"
+                      ? "bg-blue-500/20 border-blue-400 text-blue-300 shadow-lg shadow-blue-400/30"
+                      : "bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  FILLED
+                </button>
+                <button
+                  onClick={() => setOrderFilter("expired")}
+                  className={`px-4 py-2 font-mono text-sm transition-all duration-300 border rounded-lg ${
+                    orderFilter === "expired"
+                      ? "bg-orange-500/20 border-orange-400 text-orange-300 shadow-lg shadow-orange-400/30"
+                      : "bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  EXPIRED
+                </button>
+                <button
+                  onClick={() => setOrderFilter("cancelled")}
+                  className={`px-4 py-2 font-mono text-sm transition-all duration-300 border rounded-lg ${
+                    orderFilter === "cancelled"
+                      ? "bg-red-500/20 border-red-400 text-red-300 shadow-lg shadow-red-400/30"
+                      : "bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  CANCELLED
+                </button>
+                <button
+                  onClick={() => setOrderFilter("all")}
+                  className={`px-4 py-2 font-mono text-sm transition-all duration-300 border rounded-lg ${
+                    orderFilter === "all"
+                      ? "bg-purple-500/20 border-purple-400 text-purple-300 shadow-lg shadow-purple-400/30"
+                      : "bg-gray-900/50 border-gray-600/50 text-gray-400 hover:border-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  ALL
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-6 h-full overflow-y-auto">
               {loadingStates.intents ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
@@ -1171,18 +1357,22 @@ export default function Home() {
                     LOADING_ORDERS...
                   </span>
                 </div>
-              ) : intents.length === 0 ? (
+              ) : getFilteredIntents().length === 0 ? (
                 <div className="text-center py-12">
                   <Target className="w-16 h-16 mx-auto mb-4 text-gray-500" />
                   <p className="text-gray-500 font-mono text-lg">
-                    NO_ACTIVE_ORDERS
+                    {intents.length === 0
+                      ? "NO_ORDERS"
+                      : `NO_${orderFilter.toUpperCase()}_ORDERS`}
                   </p>
                   <p className="text-gray-600 font-mono text-sm mt-2">
-                    &gt; Create your first fusion order to begin
+                    {intents.length === 0
+                      ? "&gt; Create your first fusion order to begin"
+                      : `&gt; No orders found with ${orderFilter} status`}
                   </p>
                 </div>
               ) : (
-                intents.map((intent) => {
+                getFilteredIntents().map((intent) => {
                   // Handle both new FusionPlusIntent structure and legacy format
                   const intentWithLegacy = intent as FusionPlusIntent & {
                     sellToken?: string;

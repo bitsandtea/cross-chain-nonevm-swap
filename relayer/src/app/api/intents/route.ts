@@ -1,11 +1,4 @@
-import {
-  db,
-  getUserNonce,
-  incrementUserNonce,
-  initializeDatabase,
-  saveDatabase,
-} from "@/lib/database";
-import { getPriceDecayService } from "@/lib/priceDecayService";
+import { db, initializeDatabase, saveDatabase } from "@/lib/database";
 import { FusionPlusIntent, FusionPlusIntentRequest } from "@/lib/types";
 import {
   validateAptosBalance,
@@ -25,9 +18,14 @@ export async function POST(req: NextRequest) {
     const body: FusionPlusIntentRequest = await req.json();
 
     // Validate request structure
-    if (!body.fusionOrder || !body.signature || body.nonce === undefined) {
+    if (
+      !body.fusionOrder ||
+      !body.signature ||
+      body.nonce === undefined ||
+      !body.secret
+    ) {
       return NextResponse.json(
-        { error: "Missing fusionOrder, signature, or nonce" },
+        { error: "Missing fusionOrder, signature, nonce, or secret" },
         { status: 400 }
       );
     }
@@ -36,6 +34,19 @@ export async function POST(req: NextRequest) {
     const validation = validateFusionPlusOrder(body.fusionOrder);
     if (!validation.valid) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    // Validate that secret matches secretHash
+    const { HashLock } = require("@1inch/cross-chain-sdk");
+    const computedHash = HashLock.hashSecret(body.secret);
+    console.log(
+      `🔐 Secret validation: provided hash=${body.fusionOrder.secretHash}, computed hash=${computedHash}`
+    );
+    if (computedHash !== body.fusionOrder.secretHash) {
+      return NextResponse.json(
+        { error: "Secret does not match secretHash" },
+        { status: 400 }
+      );
     }
 
     // Verify signature and get user address
@@ -56,24 +67,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate nonce
-    const currentUserNonce = getUserNonce(userAddress);
-    console.log("Nonce validation:", {
-      userAddress: userAddress,
-      providedNonce: body.nonce,
-      currentNonce: currentUserNonce,
-      expectedNonce: currentUserNonce + 1,
-    });
-
+    // Validate nonce - accept any valid nonce from frontend
     if (!validateNonce(userAddress, body.nonce)) {
       return NextResponse.json(
         {
-          error: "Invalid nonce",
-          details: {
-            provided: body.nonce,
-            expected: currentUserNonce + 1,
-            current: currentUserNonce,
-          },
+          error: "Invalid nonce - must be a positive number",
         },
         { status: 400 }
       );
@@ -115,41 +113,19 @@ export async function POST(req: NextRequest) {
       updatedAt: Date.now(),
       resolverClaims: [],
       nonce: body.nonce,
+      // Store secret securely - it will be revealed when both escrows are ready
+      secret: body.secret,
+      secretHash: body.fusionOrder.secretHash,
     };
 
     // Save to database
     db.data!.intents.push(intent);
-    incrementUserNonce(userAddress);
     await saveDatabase();
 
-    // If this is a Dutch auction, add it to the price decay service
+    // Dutch auction is handled on-chain by LOP contract after deploySrc
     if (intent.fusionOrder.startRate !== "0") {
-      const priceDecayService = getPriceDecayService();
-      // Convert to legacy format for price decay service compatibility
-      const legacyFormat = {
-        id: intent.id,
-        auctionType: "dutch" as const,
-        startPrice: intent.fusionOrder.startRate,
-        minPrice: intent.fusionOrder.endRate,
-        createdAt: intent.createdAt,
-        decayRate: 200, // Default 2% decay rate
-        decayPeriod: intent.fusionOrder.auctionDuration,
-      };
-      priceDecayService.addDutchAuction(
-        legacyFormat as unknown as {
-          id: string;
-          sellToken: string;
-          buyToken: string;
-          sellAmount: string;
-          buyAmount: string;
-          maker: string;
-          createdAt: number;
-          decayRate: number;
-          decayPeriod: number;
-        }
-      );
       console.log(
-        `🎯 Added Dutch auction Fusion+ order ${intent.id} to price decay tracking`
+        `🎯 Dutch auction Fusion+ order ${intent.id} created - auction will start on-chain after deploySrc`
       );
     }
 

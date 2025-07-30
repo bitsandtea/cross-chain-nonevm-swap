@@ -1,4 +1,5 @@
-import { getPriceDecayService } from "./priceDecayService";
+import { getEscrowWatcher } from "./escrowWatcher";
+import { getRecoveryScheduler } from "./recoveryScheduler";
 
 // Initialize all services when the application starts
 let servicesInitialized = false;
@@ -10,9 +11,18 @@ export function initializeServices(): void {
 
   console.log("🚀 Initializing application services...");
 
-  // Initialize price decay service
-  const priceDecayService = getPriceDecayService();
-  console.log("✅ Price decay service initialized");
+  // Start EscrowWatcher
+  const escrowWatcher = getEscrowWatcher();
+  escrowWatcher.start();
+  console.log("✅ EscrowWatcher service started");
+
+  // Start RecoveryScheduler
+  const recoveryScheduler = getRecoveryScheduler();
+  recoveryScheduler.start();
+  console.log("✅ RecoveryScheduler service started");
+
+  // Dutch auction pricing is handled on-chain by LOP contract
+  console.log("✅ Services initialized (Dutch auctions handled on-chain)");
 
   servicesInitialized = true;
   console.log("🎉 All services initialized successfully");

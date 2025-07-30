@@ -1,5 +1,4 @@
 import { db, saveDatabase } from "@/lib/database";
-import { getPriceDecayService } from "@/lib/priceDecayService";
 import { CancelRequest } from "@/lib/types";
 import {
   verifyCancelSignature,
@@ -109,12 +108,10 @@ export async function DELETE(
 
     await saveDatabase();
 
-    // Remove from price decay service if it's a Dutch auction
+    // Dutch auction cancellation handled on-chain
     if (intent.fusionOrder.startRate !== "0") {
-      const priceDecayService = getPriceDecayService();
-      priceDecayService.removePriceCurve(intentId);
       console.log(
-        `🗑️ Removed cancelled Dutch auction ${intentId} from price decay tracking`
+        `🗑️ Cancelled Dutch auction ${intentId} - on-chain auction will stop when escrow is cancelled`
       );
     }
 

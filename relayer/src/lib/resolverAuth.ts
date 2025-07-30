@@ -13,17 +13,17 @@ export interface ResolverConfig {
 export const RESOLVER_API_KEYS: ResolverConfig[] = [
   {
     name: "Resolver 1",
-    apiKey: "resolver_1_key_abc123xyz789",
+    apiKey: "hackathon_api_key",
     address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
   },
   {
     name: "Resolver 2",
-    apiKey: "resolver_2_key_def456uvw012",
+    apiKey: "hackathon_api_key",
     address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
   },
   {
     name: "Development Resolver",
-    apiKey: "dev_resolver_key_ghi789rst345",
+    apiKey: "hackathon_api_key",
     address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   },
 ];

@@ -60,22 +60,23 @@ export const TOKEN_MAPPINGS: TokenMapping[] = [
     name: "Uniswap Token",
     decimals: 18,
   },
-  // Aptos Coin (APT)
+  // Aptos Coin (APT) - testnet format
   {
     localAddress:
       process.env.NEXT_PUBLIC_APT_ADDRESS || "0x1::aptos_coin::AptosCoin",
-    mainnetAddress: "0x1::aptos_coin::AptosCoin", // Same as local for Aptos mainnet
+    mainnetAddress: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH as APT equivalent for 1inch
     symbol: "APT",
     name: "Aptos Coin",
     decimals: 8,
   },
+
   // USDC on Aptos
   {
     localAddress:
       process.env.NEXT_PUBLIC_USDC_APTOS_ADDRESS ||
       "0x43417434fd869edee76cca2a4d2301e528a1551b1d719b75c350c3c97d15b8b9::coins::USDC",
     mainnetAddress:
-      "0x43417434fd869edee76cca2a4d2301e528a1551b1d719b75c350c3c97d15b8b9::coins::USDC", // Same as local for Aptos mainnet
+      "0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b", // Aptos USDC mainnet
     symbol: "USDC",
     name: "USD Coin",
     decimals: 6,

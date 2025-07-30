@@ -1,11 +1,11 @@
 /**
  * 1inch SDK Integration for FusionPlus Orders
- * Based on patterns from the resolver example
+ * Uses the official 1inch Cross-Chain SDK patterns from resolver.example.ts
  */
 
 import { uint8ArrayToHex, UINT_40_MAX } from "@1inch/byte-utils";
 import { HashLock, randBigInt } from "@1inch/cross-chain-sdk";
-import { ethers } from "ethers";
+import { ethers, randomBytes } from "ethers";
 import { FusionPlusOrder } from "./types";
 
 /**
@@ -164,6 +164,67 @@ export function enhanceOrderWithSDK(
 }
 
 /**
+ * Build Fusion+ order using simplified approach compatible with current SDK
+ */
+export function buildFusionPlusOrder(params: {
+  maker: string;
+  makerAsset: string;
+  takerAsset: string;
+  makingAmount: string;
+  takingAmount: string;
+  srcChain: number;
+  dstChain: number;
+  escrowFactory: string;
+  secret?: string;
+  allowPartialFills?: boolean;
+  auctionDuration?: number;
+  safetyDeposit?: string;
+}): {
+  order: FusionPlusOrder;
+  secret: string;
+  signature?: string;
+} {
+  // Generate secret if not provided
+  const secret = params.secret || uint8ArrayToHex(randomBytes(32));
+  const secretHash = HashLock.hashSecret(secret);
+
+  // Create a simplified order structure compatible with our FusionPlusOrder type
+  const order: FusionPlusOrder = {
+    makerAsset: params.makerAsset,
+    takerAsset: params.takerAsset,
+    makingAmount: params.makingAmount,
+    takingAmount: params.takingAmount,
+    maker: params.maker,
+    srcChain: params.srcChain,
+    dstChain: params.dstChain,
+    auctionStartTime: Math.floor(Date.now() / 1000),
+    auctionDuration: params.auctionDuration || 120,
+    startRate: "0",
+    endRate: "0",
+    secretHash,
+    srcEscrowTarget: params.maker,
+    dstEscrowTarget: params.maker,
+    srcTimelock: 120,
+    dstTimelock: 100,
+    finalityLock: 10,
+    srcSafetyDeposit:
+      params.safetyDeposit || ethers.parseEther("0.001").toString(),
+    dstSafetyDeposit:
+      params.safetyDeposit || ethers.parseEther("0.001").toString(),
+    fillThresholds: params.allowPartialFills ? [25, 50, 75, 100] : [100],
+    secretTree: params.allowPartialFills ? secretHash : undefined,
+    salt: ethers.toBeHex(generateRandomBigInt(BigInt(1000)), 32),
+    expiration:
+      Math.floor(Date.now() / 1000) + (params.auctionDuration || 120) + 3600,
+  };
+
+  return {
+    order,
+    secret,
+  };
+}
+
+/**
  * Utility functions compatible with resolver example patterns
  */
 export const SDKUtils = {
@@ -172,6 +233,7 @@ export const SDKUtils = {
   generateRandomBigInt,
   generateMultipleSecrets,
   calculatePartialFillIndex,
+  buildFusionPlusOrder,
 
   // Constants from resolver example
   UINT_40_MAX,

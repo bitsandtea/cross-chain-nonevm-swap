@@ -1,7 +1,15 @@
+export interface SecretData {
+  orderHash: string;
+  timestamp: number;
+  action: "secret_shared";
+  processed: boolean;
+}
+
 export interface IntentDB {
   intents: FusionPlusIntent[];
   whitelist: string[];
   nonces: Record<string, number>;
+  secrets: SecretData[];
 }
 
 // Fusion+ Order Structure Interface (now the primary order type)
@@ -80,6 +88,8 @@ export interface FusionPlusIntent {
   escrowSrcTxHash?: string; // Source chain escrow transaction
   escrowDstTxHash?: string; // Destination chain escrow transaction
   secretHash?: string; // Hash of the secret for this order
+  secret?: string; // The actual secret (revealed when ready)
+  secretRevealedAt?: number; // Timestamp when secret was revealed
   withdrawalTxHash?: string; // Final withdrawal transaction
   failureReason?: string; // Reason for failure if status is "failed"
   metadata?: Record<string, unknown>; // Additional resolver metadata
@@ -87,8 +97,10 @@ export interface FusionPlusIntent {
 
 export interface FusionPlusIntentRequest {
   fusionOrder: FusionPlusOrder;
+  sdkOrder: any; // 1inch SDK CrossChainOrder instance
   nonce: number;
   signature: string;
+  secret: string; // The actual secret for atomic swap
 }
 
 export interface CancelRequest {
