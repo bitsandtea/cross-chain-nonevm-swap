@@ -57,6 +57,13 @@ interface IEscrowFactory {
     /* solhint-enable func-name-mixedcase */
 
     /**
+     * @notice Creates a new escrow contract for maker on the source chain.
+     * @dev This function is called by the Resolver contract during LOP order filling
+     * @param immutables The escrow immutables encoded as bytes
+     */
+    function createSrcEscrow(bytes calldata immutables) external;
+
+    /**
      * @notice Creates a new escrow contract for taker on the destination chain.
      * @dev The caller must send the safety deposit in the native token along with the function call
      * and approve the destination token to be transferred to the created escrow.
