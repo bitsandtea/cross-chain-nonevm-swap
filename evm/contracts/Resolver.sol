@@ -51,50 +51,45 @@ contract Resolver is Ownable {
     /**
      * @notice Deploys source escrow via LOP order filling
      * @dev Forwards msg.value as safety deposit, sets _ARGS_HAS_TARGET bit, calls LOP.fillOrder
+     * @param immutables Pre-built immutables for escrow deployment
      * @param order The LOP order to fill
      * @param r The r component of the order signature
      * @param vs The vs component of the order signature
      * @param fillAmount The amount to fill from the order
-     * @param args Additional arguments for the order fill
+     * @param takerTraits Pre-built taker traits with _ARGS_HAS_TARGET bit set
+     * @param args Additional arguments for the order fill (encoded target + interaction)
      */
     function deploySrc(
+        IBaseEscrow.Immutables calldata immutables,
         IOrderMixin.Order calldata order,
         bytes32 r,
         bytes32 vs,
         uint256 fillAmount,
+        TakerTraits takerTraits,
         bytes calldata args
     ) external payable onlyOwner {
         // Validate safety deposit is provided
         if (msg.value == 0) revert InsufficientSafetyDeposit();
-
-        // Decode parameters from args
-        bytes32 hashlock = bytes32(args[:32]);
-        Timelocks timelocks = abi.decode(args[32:], (Timelocks));
         
-        // Create immutables for escrow deployment  
-        IBaseEscrow.Immutables memory immutables = IBaseEscrow.Immutables({
-            orderHash: _LOP.hashOrder(order),
-            hashlock: hashlock,
-            maker: order.maker,
-            taker: order.receiver.get() == address(0) ? order.maker : order.receiver,
-            token: order.makerAsset,
-            amount: fillAmount,
-            safetyDeposit: msg.value,
-            timelocks: TimelocksLib.setDeployedAt(timelocks, block.timestamp)
-        });
+        // Validate that safety deposit matches immutables
+        if (msg.value != immutables.safetyDeposit) revert InsufficientSafetyDeposit();
+        
+        // Validate that fill amount matches immutables
+        if (fillAmount != immutables.amount) revert LengthMismatch();
+
+        // Update timelocks with deployment timestamp
+        IBaseEscrow.Immutables memory immutablesMem = immutables;
+        immutablesMem.timelocks = TimelocksLib.setDeployedAt(immutables.timelocks, block.timestamp);
 
         // Pre-compute escrow address and send safety deposit
-        address computedEscrow = _FACTORY.addressOfEscrowSrc(immutables);
+        address computedEscrow = _FACTORY.addressOfEscrowSrc(immutablesMem);
         (bool success,) = computedEscrow.call{value: msg.value}("");
         if (!success) revert IBaseEscrow.NativeTokenSendingFailure();
 
-        // Set _ARGS_HAS_TARGET bit (1 << 251) to enable postInteraction
-        TakerTraits takerTraits = TakerTraits.wrap(uint256(1 << 251));
-        
         // Encode postInteraction call to createSrcEscrow
         bytes memory postInteractionData = abi.encodeWithSelector(
             _FACTORY.createSrcEscrow.selector,
-            abi.encode(immutables)
+            abi.encode(immutablesMem)
         );
         
         // Combine target address and postInteraction data for LOP args
