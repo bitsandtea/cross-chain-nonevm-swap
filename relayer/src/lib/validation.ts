@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
+import { RPC_URL, ZERO_ADDRESS } from "../../config/env";
 import { isTokenWhitelisted } from "./database";
-import { validateEscrowTargets, validateTimelockSequence } from "./flowUtils";
 import { getTokenInfo as getStaticTokenInfo } from "./tokenMapping";
 import { CANCEL_TYPE, FUSION_ORDER_TYPE, FusionPlusOrder } from "./types";
 
@@ -71,7 +71,7 @@ async function getServerTokenInfo(tokenAddress: string): Promise<TokenInfo> {
       throw new Error("Invalid EVM token address");
     }
 
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+    const rpcUrl = RPC_URL;
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const tokenContract = new ethers.Contract(
       tokenAddress,
@@ -109,27 +109,17 @@ async function getServerTokenInfo(tokenAddress: string): Promise<TokenInfo> {
 }
 
 // Create dynamic domain for signature verification
-function createDomain(chainId?: number): {
+function createDomain(chainId: number): {
   name: string;
   version: string;
   chainId: number;
   verifyingContract: string;
 } {
-  const getCurrentChainId = () => {
-    const chainId =
-      process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || "31337";
-    return parseInt(chainId);
-  };
-
-  const actualChainId = chainId || getCurrentChainId();
   return {
     name: "CrossChainFusionPlus",
     version: "1",
-    chainId: actualChainId,
-    verifyingContract:
-      process.env.ZERO_ADDRESS ||
-      process.env.NEXT_PUBLIC_ZERO_ADDRESS ||
-      "0x0000000000000000000000000000000000000000",
+    chainId: chainId,
+    verifyingContract: ZERO_ADDRESS,
   };
 }
 
@@ -137,7 +127,7 @@ export async function verifyFusionOrderSignature(
   fusionOrder: FusionPlusOrder,
   nonce: number,
   signature: string,
-  chainId?: number
+  chainId: number
 ): Promise<string> {
   const domain = createDomain(chainId);
   console.log("Verifying Fusion+ order signature with domain:", domain);
@@ -162,7 +152,7 @@ export async function verifyCancelSignature(
   intentId: string,
   nonce: number,
   signature: string,
-  chainId?: number
+  chainId: number
 ): Promise<string> {
   const domain = createDomain(chainId);
   const message = { intentId, nonce };
@@ -178,7 +168,7 @@ export async function validateEVMBalance(
   factoryAddress: string
 ): Promise<boolean> {
   try {
-    const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+    const rpcUrl = RPC_URL;
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     console.log("rpcUrl", rpcUrl);
 
@@ -244,7 +234,8 @@ export async function validateEVMBalance(
 export async function validateAptosBalance(
   userAddress: string,
   tokenType: string,
-  amount: string
+  amount: string,
+  aptosRpcUrl: string
 ): Promise<boolean> {
   try {
     console.log(`🔧 [Validation] Checking Aptos balance for ${userAddress}`, {
@@ -256,8 +247,6 @@ export async function validateAptosBalance(
     const { Aptos, AptosConfig, Network } = require("@aptos-labs/ts-sdk");
 
     // Configure Aptos client
-    const aptosRpcUrl =
-      process.env.APTOS_RPC_URL || "https://fullnode.testnet.aptoslabs.com/v1";
     const isTestnet =
       aptosRpcUrl.includes("testnet") || aptosRpcUrl.includes("devnet");
 
@@ -576,15 +565,22 @@ export function validateFusionPlusOrder(fusionOrder: FusionPlusOrder): {
   }
 
   // Validate timelock sequence
-  const timelockValidation = validateTimelockSequence(fusionOrder);
-  if (!timelockValidation.valid) {
-    return timelockValidation;
+  if (fusionOrder.srcTimelock <= fusionOrder.dstTimelock) {
+    return {
+      valid: false,
+      error: "Source timelock must be greater than destination timelock",
+    };
   }
 
-  // Validate escrow targets
-  const escrowValidation = validateEscrowTargets(fusionOrder);
-  if (!escrowValidation.valid) {
-    return escrowValidation;
+  // Validate escrow targets are valid addresses
+  if (
+    !isEVMAddress(fusionOrder.srcEscrowTarget) ||
+    !isEVMAddress(fusionOrder.dstEscrowTarget)
+  ) {
+    return {
+      valid: false,
+      error: "Invalid escrow target addresses",
+    };
   }
 
   // Validate auction parameters

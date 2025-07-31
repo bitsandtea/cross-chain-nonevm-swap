@@ -1,3 +1,5 @@
+import { ZERO_ADDRESS } from "../../config/env";
+
 export interface SecretData {
   orderHash: string;
   timestamp: number;
@@ -69,6 +71,7 @@ export interface FusionPlusIntent {
   fusionOrder: FusionPlusOrder;
   signature: string;
   status:
+    | "open" // Phase 1: Order open and available for resolvers
     | "pending" // Phase 1: Announcement - Dutch auction active
     | "processing" // Phase 2: Deposit - Resolver working on escrows
     | "escrow_src_created" // Phase 2: Source chain escrow created
@@ -79,20 +82,26 @@ export interface FusionPlusIntent {
     | "failed" // Execution failed during any phase
     | "cancelled" // User cancelled or resolver cancelled
     | "expired"; // Phase 4: Recovery - Timelock expired
-  createdAt: number;
-  updatedAt: number;
+  createdAt: string | number; // Support both string and number for backward compatibility
+  updatedAt: string | number; // Support both string and number for backward compatibility
   resolverClaims: ResolverClaim[];
   nonce: number; // Moved from fusionOrder to intent level for signature
   // Fusion+ protocol metadata
   phase?: 1 | 2 | 3 | 4; // Current protocol phase
   escrowSrcTxHash?: string; // Source chain escrow transaction
   escrowDstTxHash?: string; // Destination chain escrow transaction
-  secretHash?: string; // Hash of the secret for this order
-  secret?: string; // The actual secret (revealed when ready)
+  secretHash?: string; // Hash of the secret for this order (ONLY hash stored per spec G-2)
+  // Note: secret is NOT stored per spec G-2 - only validated and used during resolution
   secretRevealedAt?: number; // Timestamp when secret was revealed
   withdrawalTxHash?: string; // Final withdrawal transaction
   failureReason?: string; // Reason for failure if status is "failed"
   metadata?: Record<string, unknown>; // Additional resolver metadata
+
+  // New fields for CrossChainOrder support
+  orderHash?: string; // Order hash for tracking
+  hash?: string; // Secret hash for atomic swaps
+  sdkOrder?: any; // Full 1inch SDK CrossChainOrder object
+  extension?: any; // CrossChainOrder extension data
 }
 
 export interface FusionPlusIntentRequest {
@@ -131,8 +140,7 @@ export const DOMAIN = {
   name: "CrossChainFusionPlus",
   version: "1",
   chainId: 1,
-  verifyingContract:
-    process.env.ZERO_ADDRESS || "0x0000000000000000000000000000000000000000",
+  verifyingContract: ZERO_ADDRESS,
 };
 
 export const FUSION_ORDER_TYPE = {

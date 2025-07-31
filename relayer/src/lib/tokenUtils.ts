@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { toast } from "react-hot-toast";
+import { ETH_FACTORY_ADDRESS, RPC_URL } from "../../config/env";
 import { getTokenInfo as getStaticTokenInfo } from "./tokenMapping";
 
 // ERC20 ABI for allowance and approval
@@ -13,9 +14,7 @@ export const ERC20_ABI = [
 ];
 
 // Factory address for allowance checking
-export const FACTORY_ADDRESS =
-  process.env.NEXT_PUBLIC_ETH_FACTORY_ADDRESS ||
-  "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853";
+export const FACTORY_ADDRESS = ETH_FACTORY_ADDRESS;
 
 export interface AllowanceState {
   currentAllowance: bigint;
@@ -76,9 +75,7 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
       throw new Error("Invalid EVM token address");
     }
 
-    const provider = new ethers.JsonRpcProvider(
-      process.env.NEXT_PUBLIC_RPC_URL || "http://127.0.0.1:8545"
-    );
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
     const tokenContract = new ethers.Contract(
       tokenAddress,
       ERC20_ABI,
@@ -185,9 +182,7 @@ export async function checkTokenAllowance(
     // Get token info and validate contract
     const tokenInfo = await getTokenInfo(tokenAddress);
 
-    const provider = new ethers.JsonRpcProvider(
-      process.env.NEXT_PUBLIC_RPC_URL || "http://127.0.0.1:8545"
-    );
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
     const tokenContract = new ethers.Contract(
       tokenAddress,
       ERC20_ABI,

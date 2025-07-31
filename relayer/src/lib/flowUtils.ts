@@ -1,60 +1,218 @@
-import { uint8ArrayToHex, UINT_40_MAX } from "@1inch/byte-utils";
-import { HashLock, randBigInt } from "@1inch/cross-chain-sdk";
 import { ethers } from "ethers";
 import { toast } from "react-hot-toast";
-import { buildFusionPlusOrder } from "./sdkIntegration";
+import {
+  ETH_FACTORY_ADDRESS,
+  RESOLVER_ADDRESS,
+  USDC_ADDRESS,
+  USDC_APTOS_ADDRESS,
+  ZERO_ADDRESS,
+} from "../../config/env";
+import { generateSecrets, storeSecret } from "./crypto";
+
+// Real 1inch SDK imports - using installed packages
+import {
+  AuctionDetails,
+  EvmCrossChainOrder as CrossChainOrder,
+  EvmAddress,
+  HashLock,
+  NetworkEnum,
+  TimeLocks,
+} from "@1inch/cross-chain-sdk";
+
+import { TOKEN_MAPPINGS } from "./tokenMapping";
 import {
   AllowanceState,
   approveTokenAllowance,
   checkTokenAllowance,
-  parseTokenAmountWithDecimals,
 } from "./tokenUtils";
+
+// Import types from dedicated types folder
 import {
-  FUSION_ORDER_TYPE,
-  FusionPlusIntentRequest,
-  FusionPlusOrder,
-} from "./types";
+  CrossChainOrderInfo,
+  Details,
+  EscrowParams,
+  Extra,
+  FlowStep,
+  FormData,
+} from "../types/flow";
 
-// Flow steps
-export enum FlowStep {
-  FORM = "form",
-  CHECKING_ALLOWANCE = "checking_allowance",
-  NEEDS_APPROVAL = "needs_approval",
-  APPROVING = "approving",
-  READY_TO_SIGN = "ready_to_sign",
-  SIGNING = "signing",
+// Helper function to detect if an address is Aptos-style (non-EVM)
+function isAptosAddress(address: string): boolean {
+  if (!address) return false;
+
+  // Check if it contains Move module syntax (::)
+  if (address.includes("::")) return true;
+
+  // Check if it's longer than EVM address (EVM = 42 chars, Aptos can be 64+ chars)
+  if (address.startsWith("0x") && address.length > 42) return true;
+
+  return false;
 }
 
-export interface FormData {
-  chainIn: number;
-  chainOut: number;
-  sellToken: string;
-  sellAmount: string;
-  buyToken: string;
-  minBuyAmount: string;
-  deadline: string;
-  // Dutch auction parameters
-  auctionType: "fixed" | "dutch";
-  startPricePremium: string; // Percentage above market price (e.g., "10" for 10%)
-  minPriceDiscount: string; // Percentage below market price (e.g., "5" for 5%)
-  decayRate: string;
-  decayPeriod: string;
-  auctionStartDelay?: string; // Delay before auction starts (in seconds)
-  // Escrow targets (optional, defaults to user address)
-  srcEscrowTarget?: string;
-  dstEscrowTarget?: string;
-  // NEW: User-specified destination address for cross-chain swaps
-  destinationAddress?: string;
-  // Safety deposits (optional, uses defaults)
-  srcSafetyDeposit?: string;
-  dstSafetyDeposit?: string;
+// Helper function to detect if a chain is non-EVM
+function isNonEvmChain(chainId: number): boolean {
+  return chainId === 1000; // Aptos chain ID
 }
 
-export interface FlowState {
-  currentStep: FlowStep;
-  allowanceState: AllowanceState;
-  approvalTxHash: string;
-  loading: boolean;
+// Utility function to get token decimals
+function getTokenDecimals(tokenAddress: string): number {
+  const mapping = TOKEN_MAPPINGS.find(
+    (token) =>
+      token.localAddress.toLowerCase() === tokenAddress.toLowerCase() ||
+      token.mainnetAddress.toLowerCase() === tokenAddress.toLowerCase()
+  );
+  return mapping?.decimals || 18; // Default to 18 if not found
+}
+
+// Create NonEvmDstExtension for Aptos metadata using 1inch utilities
+function createNonEvmDstExtension(formData: FormData): {
+  extensionBytes: string;
+  metadata: any;
+} {
+  // Check if this is a cross-chain order to Aptos using improved detection
+  const isDestinationNonEvm =
+    isNonEvmChain(formData.chainOut) || isAptosAddress(formData.buyToken);
+
+  if (isDestinationNonEvm) {
+    // Use real Aptos chain ID - prioritize chainOut if it's Aptos, otherwise use aptosChainId field
+    const aptosChainId = isNonEvmChain(formData.chainOut)
+      ? formData.chainOut
+      : formData.aptosChainId || 48; // Default to testnet if no specific Aptos ID
+    const aptosCoinType = formData.aptosCoinType || formData.buyToken; // Use buyToken as fallback
+    const aptosReceiver =
+      formData.aptosReceiver || formData.destinationAddress || ""; // Use destinationAddress as fallback
+
+    console.log("🔧 Creating NonEvmDstExtension with real chain ID:", {
+      formDataChainOut: formData.chainOut,
+      finalAptosChainId: aptosChainId,
+      aptosCoinType,
+      aptosReceiver,
+    });
+
+    const metadata = {
+      type: "NonEvmDstExtension",
+      version: 1,
+      chainId: aptosChainId,
+      coinType: aptosCoinType,
+      receiver: aptosReceiver,
+    };
+
+    // Encode the extension as hex bytes according to 1inch protocol
+    // Format: [type:2bytes][version:1byte][chainId:4bytes][coinTypeLength:1byte][coinType:variable][receiver:32bytes]
+    const typeHex = "4E45"; // "NE" in hex for NonEvm
+    const versionHex = "01"; // Version 1
+    const chainIdHex = aptosChainId.toString(16).padStart(8, "0");
+    const coinTypeBytes = ethers.toUtf8Bytes(aptosCoinType);
+    const coinTypeLengthHex = coinTypeBytes.length
+      .toString(16)
+      .padStart(2, "0");
+    const coinTypeHex = ethers.hexlify(coinTypeBytes).slice(2); // Remove 0x prefix
+    const receiverHex = aptosReceiver.replace(/^0x/, "").padStart(64, "0"); // Ensure 32 bytes
+
+    const extensionBytes =
+      "0x" +
+      typeHex +
+      versionHex +
+      chainIdHex +
+      coinTypeLengthHex +
+      coinTypeHex +
+      receiverHex;
+
+    console.log("✅ NonEvmDstExtension created:", {
+      extensionBytes,
+      length: extensionBytes.length,
+    });
+
+    return { extensionBytes, metadata };
+  }
+
+  return { extensionBytes: "0x", metadata: null }; // Empty extension for non-Aptos chains
+}
+
+// Enhanced CrossChainOrder creation that properly handles extensions
+function createCrossChainOrderWithExtension(
+  ESCROW_FACTORY_ADDRESS: string,
+  orderInfo: CrossChainOrderInfo,
+  escrowParams: EscrowParams,
+  details: Details,
+  extra: Extra,
+  nonEvmExtension: { extensionBytes: string; metadata: any }
+): CrossChainOrder {
+  console.log("🔧 createCrossChainOrderWithExtension called with:", {
+    factoryAddress: ESCROW_FACTORY_ADDRESS,
+    hasNonEvmExtension: nonEvmExtension.extensionBytes !== "0x",
+    extensionLength: nonEvmExtension.extensionBytes.length,
+  });
+
+  // If we have a NonEvmDstExtension, we need to customize the order creation
+  if (nonEvmExtension.extensionBytes !== "0x") {
+    console.log("🔧 Creating CrossChainOrder with NonEvmDstExtension...");
+
+    try {
+      // Create the base CrossChainOrder first
+      console.log("🔧 Calling CrossChainOrder.new()...");
+      const baseOrder = CrossChainOrder.new(
+        EvmAddress.fromString(ESCROW_FACTORY_ADDRESS),
+        orderInfo,
+        escrowParams,
+        details,
+        extra
+      );
+
+      console.log("🔧 Base order created successfully");
+      console.log("🔧 Base order properties:", {
+        hasExtension: !!baseOrder.extension,
+        extensionType: typeof baseOrder.extension,
+      });
+
+      // Get the base extension data
+      console.log("🔧 Encoding base extension...");
+      const baseExtensionBytes = baseOrder.extension.encode();
+      console.log("🔧 Base extension bytes:", baseExtensionBytes);
+
+      // Combine the base extension with the NonEvmDstExtension
+      const combinedExtensionBytes =
+        baseExtensionBytes + nonEvmExtension.extensionBytes.slice(2);
+      console.log("🔧 Combined extension bytes:", combinedExtensionBytes);
+
+      // Store the combined extension on the order
+      (baseOrder as any)._combinedExtensionBytes = combinedExtensionBytes;
+      (baseOrder as any)._nonEvmExtensionMetadata = nonEvmExtension.metadata;
+
+      console.log("✅ Combined extension created:", {
+        base: baseExtensionBytes,
+        nonEvm: nonEvmExtension.extensionBytes,
+        combined: combinedExtensionBytes,
+        metadata: nonEvmExtension.metadata,
+      });
+
+      return baseOrder;
+    } catch (error) {
+      console.error("❌ Error in NonEvmDstExtension path:", error);
+      throw error;
+    }
+  }
+
+  // For orders without NonEvmDstExtension, use standard creation
+  console.log(
+    "🔧 Creating standard CrossChainOrder (no NonEvmDstExtension)..."
+  );
+
+  try {
+    const order = CrossChainOrder.new(
+      EvmAddress.fromString(ESCROW_FACTORY_ADDRESS),
+      orderInfo,
+      escrowParams,
+      details,
+      extra
+    );
+
+    console.log("✅ Standard CrossChainOrder created successfully");
+    return order;
+  } catch (error) {
+    console.error("❌ Error in standard path:", error);
+    throw error;
+  }
 }
 
 // Flow management class
@@ -162,174 +320,54 @@ export class IntentFlowManager {
       const network = await provider.getNetwork();
       const currentChainId = Number(network.chainId);
 
-      // Create dynamic domain with current chain ID
-      const dynamicDomain = {
-        name: "CrossChainFusionPlus",
-        version: "1",
-        chainId: currentChainId,
-        verifyingContract:
-          process.env.NEXT_PUBLIC_ZERO_ADDRESS ||
-          "0x0000000000000000000000000000000000000000",
-      };
+      // ONLY CROSS-CHAIN ORDERS ARE SUPPORTED!
+      const isCrossChain = formData.chainIn !== formData.chainOut;
 
-      // Get user nonce from API
-      const nonceResponse = await fetch(`/api/nonce/${account}`);
-      const nonceData = await nonceResponse.json();
-      const nonce = nonceData.nextNonce;
-
-      // Calculate required buffer time for timelock execution
-      const defaultParams = getDefaultFusionPlusParams();
-      const requiredBufferTime =
-        Math.max(defaultParams.srcTimelock, defaultParams.dstTimelock) +
-        defaultParams.finalityLock;
-
-      // Add both the user deadline and required buffer time
-      const expiration =
-        Math.floor(Date.now() / 1000) +
-        parseInt(formData.deadline) * 3600 +
-        requiredBufferTime;
-
-      // Parse amounts with correct decimals for tokens on their respective chains
-      let makingAmountParsed: bigint;
-      let takingAmountParsed: bigint;
-
-      // Use parseTokenAmountWithDecimals for all tokens to handle correct decimals
-      makingAmountParsed = await parseTokenAmountWithDecimals(
-        formData.sellAmount,
-        formData.sellToken
-      );
-
-      takingAmountParsed = await parseTokenAmountWithDecimals(
-        formData.minBuyAmount,
-        formData.buyToken
-      );
-
-      // Calculate Dutch auction prices if needed
-      let startRate = "0";
-      let endRate = "0";
-
-      if (formData.auctionType === "dutch") {
-        const calculatedPrices = await calculateAuctionPrices(
-          formData.sellAmount,
-          formData.sellToken,
-          formData.startPricePremium || "10",
-          formData.minPriceDiscount || "5"
+      if (!isCrossChain) {
+        throw new Error(
+          "❌ Same-chain swaps are not supported! Please select different source and destination chains."
         );
-
-        if (!calculatedPrices) {
-          throw new Error("Failed to calculate auction prices");
-        }
-
-        startRate = calculatedPrices.startPrice;
-        endRate = calculatedPrices.minPrice;
       }
 
-      // Generate secret and salt using 1inch SDK
-      const secret = uint8ArrayToHex(ethers.randomBytes(32));
-      const secretHash = HashLock.hashSecret(secret);
-      const salt = ethers.toBeHex(randBigInt(BigInt(1000)), 32);
-
-      // Get default parameters
-      const defaults = getDefaultFusionPlusParams();
-
-      // Build secret tree for partial fills
-      let secretTree: string | undefined;
-      try {
-        const { buildPartialFillTree } = await import("./merkleUtils");
-        const partialFillTree = buildPartialFillTree(
-          secret,
-          defaults.fillThresholds
+      if (!formData.secretHash) {
+        throw new Error(
+          "❌ Secret hash is required for cross-chain orders! Please generate a secret first."
         );
-        secretTree = partialFillTree.root;
-      } catch (error) {
-        console.error("Failed to build partial fill tree:", error);
-        // Continue without secretTree for now
       }
 
-      // Calculate proper escrow target addresses (withdrawal destinations)
-      const srcEscrowTarget = account; // User's address on source chain
-      const dstEscrowTarget = formData.destinationAddress || account; // User's address on destination chain
+      // Use REAL CrossChainOrder.new() for ALL orders
+      console.log("🚀 Building cross-chain order using REAL 1inch SDK...");
 
-      // Create the Fusion+ order with proper escrow targets
-      const fusionOrder: FusionPlusOrder = {
-        makerAsset: formData.sellToken,
-        takerAsset: formData.buyToken,
-        makingAmount: makingAmountParsed.toString(),
-        takingAmount: takingAmountParsed.toString(),
-        maker: account,
-        srcChain: formData.chainIn,
-        dstChain: formData.chainOut,
-        auctionStartTime:
-          Math.floor(Date.now() / 1000) +
-          parseInt(formData.auctionStartDelay || "0"),
-        auctionDuration:
-          parseInt(formData.decayPeriod) || defaults.auctionDuration,
-        startRate,
-        endRate,
-        secretHash,
-        srcEscrowTarget, // User's withdrawal address on source chain
-        dstEscrowTarget, // User's withdrawal address on destination chain
-        srcTimelock: defaults.srcTimelock,
-        dstTimelock: defaults.dstTimelock,
-        finalityLock: defaults.finalityLock,
-        srcSafetyDeposit:
-          formData.srcSafetyDeposit || defaults.srcSafetyDeposit,
-        dstSafetyDeposit:
-          formData.dstSafetyDeposit || defaults.dstSafetyDeposit,
-        fillThresholds: defaults.fillThresholds,
-        secretTree,
-        salt,
-        expiration,
-      };
+      const { order: crossChainOrder, merkleSecrets } =
+        this.buildCrossChainOrder(account, formData, currentChainId);
 
-      // Build order using 1inch SDK
-      const { order: sdkOrder } = buildFusionPlusOrder({
-        maker: fusionOrder.maker,
-        makerAsset: fusionOrder.makerAsset,
-        takerAsset: fusionOrder.takerAsset,
-        makingAmount: fusionOrder.makingAmount,
-        takingAmount: fusionOrder.takingAmount,
-        srcChain: fusionOrder.srcChain,
-        dstChain: fusionOrder.dstChain,
-        escrowFactory: process.env.NEXT_PUBLIC_ETH_FACTORY_ADDRESS || "",
-        secret: secret, // Use the generated secret from earlier
-        allowPartialFills: (fusionOrder.fillThresholds?.length || 0) > 1,
-        auctionDuration: fusionOrder.auctionDuration,
-        safetyDeposit: fusionOrder.srcSafetyDeposit,
-      });
+      // Get EIP-712 typed data for signing
+      const { domain, types, message } =
+        crossChainOrder.getTypedData(currentChainId);
+      console.log("🔐 EIP-712 domain:", domain);
+      console.log("🔐 EIP-712 types:", types);
+      console.log("🔐 EIP-712 message:", message);
 
-      // Basic validation of SDK order
-      if (
-        !sdkOrder ||
-        !sdkOrder.maker ||
-        !sdkOrder.makerAsset ||
-        !sdkOrder.takerAsset
-      ) {
-        toast.error("Invalid order generated by SDK");
-        this.setCurrentStep(FlowStep.FORM);
-        return;
-      }
+      // Remove EIP712Domain to avoid ambiguity (ethers-v6 requirement)
+      const orderTypes = { Order: types.Order };
 
-      // Create message for signing (includes nonce)
-      const message = {
-        ...fusionOrder,
-        nonce,
-      };
+      // Sign with EIP-712 typed data
+      const signature = await signer.signTypedData(domain, orderTypes, message);
+      console.log("✅ EIP-712 signature created successfully");
 
-      // Sign order with dynamic domain
-      const signature = await signer.signTypedData(
-        dynamicDomain,
-        FUSION_ORDER_TYPE,
-        message
-      );
-
-      // Submit to API with both orders
-      const requestBody: FusionPlusIntentRequest = {
-        fusionOrder,
-        sdkOrder,
-        nonce,
+      // Submit to API with new payload structure
+      const requestBody = {
+        order: crossChainOrder.build(),
+        extension: (crossChainOrder as any)._combinedExtensionBytes
+          ? {
+              ...crossChainOrder.extension,
+              _combinedBytes: (crossChainOrder as any)._combinedExtensionBytes,
+              _nonEvmMetadata: (crossChainOrder as any)
+                ._nonEvmExtensionMetadata,
+            }
+          : crossChainOrder.extension,
         signature,
-        secret, // Include the actual secret for storage
+        hash: formData.secretHash,
       };
 
       const response = await fetch("/api/intents", {
@@ -341,13 +379,39 @@ export class IntentFlowManager {
       const result = await response.json();
 
       if (response.ok) {
-        toast.success("🚀 Fusion+ order broadcasted to the grid!");
+        // Store secret(s) for later use during settlement
+        if (result.orderHash) {
+          if (merkleSecrets) {
+            // Store all secrets for partial fills
+            merkleSecrets.secrets.forEach((secret: string, index: number) => {
+              storeSecret(`${result.orderHash}_${index}`, secret);
+            });
+            // Also store the merkle root and tree structure
+            storeSecret(
+              `${result.orderHash}_merkle`,
+              JSON.stringify({
+                root: merkleSecrets.merkleRoot,
+                tree: merkleSecrets.tree,
+                hashes: merkleSecrets.hashes,
+              })
+            );
+            console.log(
+              "✅ Merkle secrets stored for order:",
+              result.orderHash
+            );
+          } else if (formData.secret) {
+            // Store single secret for non-partial fills
+            storeSecret(result.orderHash, formData.secret);
+            console.log("✅ Secret stored for order:", result.orderHash);
+          }
+        }
+
+        toast.success("🚀 Cross-chain order broadcasted to the grid!");
         this.resetFlow();
         loadIntents();
-        await loadUserBalances(account);
-        return; // Success, return the default form data reset
+        loadUserBalances(account);
       } else {
-        toast.error(result.error || "Failed to submit Fusion+ order");
+        toast.error(result.error || "Failed to submit cross-chain order");
         this.setCurrentStep(FlowStep.FORM);
       }
     } catch (error) {
@@ -365,6 +429,384 @@ export class IntentFlowManager {
       this.setCurrentStep(FlowStep.FORM);
     } finally {
       this.setLoading(false);
+    }
+  }
+
+  // Build REAL CrossChainOrder using 1inch SDK
+  private buildCrossChainOrder(
+    account: string,
+    formData: FormData,
+    srcChainId: number
+  ): {
+    order: CrossChainOrder;
+    merkleSecrets?: any;
+  } {
+    console.log("🚀 Starting CrossChainOrder build process...");
+    console.log("📋 Form data:", {
+      chainIn: formData.chainIn,
+      chainOut: formData.chainOut,
+      sellToken: formData.sellToken,
+      buyToken: formData.buyToken,
+      sellAmount: formData.sellAmount,
+      minBuyAmount: formData.minBuyAmount,
+      auctionType: formData.auctionType,
+      account,
+      srcChainId,
+    });
+
+    const ESCROW_FACTORY_ADDRESS = ETH_FACTORY_ADDRESS;
+    console.log("🏭 Using EscrowFactory address:", ESCROW_FACTORY_ADDRESS);
+
+    // Get correct token decimals
+    const makerTokenDecimals = getTokenDecimals(formData.sellToken);
+    const takerTokenDecimals = getTokenDecimals(formData.buyToken);
+
+    console.log("💰 Token decimals:", {
+      sellToken: formData.sellToken,
+      sellTokenDecimals: makerTokenDecimals,
+      buyToken: formData.buyToken,
+      buyTokenDecimals: takerTokenDecimals,
+    });
+
+    // Check for non-EVM chains and addresses using improved detection
+    const isSourceNonEvm =
+      isNonEvmChain(formData.chainIn) ||
+      isAptosAddress(formData.sellToken) ||
+      (account && isAptosAddress(account));
+    const isDestinationNonEvm =
+      isNonEvmChain(formData.chainOut) ||
+      isAptosAddress(formData.buyToken) ||
+      (formData.destinationAddress &&
+        isAptosAddress(formData.destinationAddress));
+
+    if (isSourceNonEvm) {
+      console.log("🔗 Detected non-EVM source:", {
+        chainIn: formData.chainIn,
+        sellToken: formData.sellToken,
+        account: account,
+        message:
+          "Source chain or addresses are non-EVM - this may not be fully supported yet",
+      });
+    }
+
+    if (isDestinationNonEvm) {
+      console.log("🔗 Detected non-EVM destination:", {
+        chainOut: formData.chainOut,
+        buyToken: formData.buyToken,
+        destinationAddress: formData.destinationAddress,
+        message:
+          "Using zero address for EVM field, real address will be in extension",
+      });
+    }
+
+    // For cross-chain orders involving non-EVM chains, we may need special handling
+    if (isSourceNonEvm && isDestinationNonEvm) {
+      throw new Error(
+        "❌ Non-EVM to Non-EVM swaps are not supported yet. Please use at least one EVM chain."
+      );
+    }
+
+    if (isSourceNonEvm) {
+      throw new Error(
+        "❌ Non-EVM source chains are not fully supported yet. Please start from an EVM chain."
+      );
+    }
+
+    // Build CrossChainOrderInfo
+    const makingAmount = ethers.parseUnits(
+      formData.sellAmount,
+      makerTokenDecimals
+    );
+    const takingAmount = ethers.parseUnits(
+      formData.minBuyAmount,
+      takerTokenDecimals
+    );
+    // Use proper 40-bit random for salt (like working example)
+    const saltMax = BigInt("0xffffffffff");
+    const salt = BigInt(Math.floor(Math.random() * Number(saltMax))); // 40-bit max
+
+    console.log("💱 Parsed amounts:", {
+      sellAmount: formData.sellAmount,
+      makingAmount: makingAmount.toString(),
+      minBuyAmount: formData.minBuyAmount,
+      takingAmount: takingAmount.toString(),
+      salt: salt.toString(),
+      saltHex: `0x${salt.toString(16)}`,
+      saltBits: salt.toString(16).length * 4,
+      maxAllowed: "0xffffffffff (40 bits)",
+    });
+
+    const orderInfo: CrossChainOrderInfo = {
+      // For non-EVM source assets, use zero address (but we're blocking this case above for now)
+      makerAsset: isAptosAddress(formData.sellToken)
+        ? EvmAddress.fromString(ZERO_ADDRESS)
+        : EvmAddress.fromString(formData.sellToken),
+      // For non-EVM destinations, use zero address in EVM field - real address goes in extension
+      takerAsset: isDestinationNonEvm
+        ? EvmAddress.fromString(ZERO_ADDRESS)
+        : EvmAddress.fromString(formData.buyToken),
+      makingAmount,
+      takingAmount,
+      // For non-EVM maker, use zero address (but we're blocking this case above for now)
+      maker: isAptosAddress(account)
+        ? EvmAddress.fromString(ZERO_ADDRESS)
+        : EvmAddress.fromString(account),
+      receiver: formData.destinationAddress
+        ? isAptosAddress(formData.destinationAddress)
+          ? undefined // Non-EVM receiver goes in extension
+          : EvmAddress.fromString(formData.destinationAddress)
+        : undefined,
+      salt,
+    };
+
+    console.log("📦 CrossChainOrderInfo built:", {
+      makerAsset: orderInfo.makerAsset.toString(),
+      takerAsset: orderInfo.takerAsset.toString(),
+      makingAmount: orderInfo.makingAmount.toString(),
+      takingAmount: orderInfo.takingAmount.toString(),
+      maker: orderInfo.maker.toString(),
+      receiver: orderInfo.receiver?.toString() || "undefined",
+      salt: orderInfo.salt?.toString() || "undefined",
+    });
+
+    // Handle multiple fills with Merkle tree
+    let secretHash =
+      formData.secretHash ||
+      "0x0000000000000000000000000000000000000000000000000000000000000000";
+    let merkleSecrets: any = null;
+
+    if (formData.multipleFillsAllowed) {
+      // Generate multiple secrets and Merkle tree for partial fills
+      merkleSecrets = generateSecrets(4); // 4 secrets for 25%, 50%, 75%, 100% fills
+      secretHash = merkleSecrets.merkleRoot;
+      console.log("🌳 Generated Merkle tree for partial fills:", {
+        root: merkleSecrets.merkleRoot,
+        leaves: merkleSecrets.hashes,
+      });
+    }
+
+    // Build EscrowParams
+    // For non-EVM chains, use placeholder EVM chain IDs and pass real IDs through extension
+    const srcChainIdForOrder = isNonEvmChain(formData.chainIn)
+      ? (56 as NetworkEnum) // Use BSC as placeholder for non-EVM source chains
+      : (formData.chainIn as NetworkEnum);
+    const dstChainIdForOrder = isNonEvmChain(formData.chainOut)
+      ? (56 as NetworkEnum) // Use BSC as placeholder for non-EVM destination chains
+      : (formData.chainOut as NetworkEnum);
+
+    console.log("🔗 Chain ID mapping:", {
+      originalSrc: formData.chainIn,
+      mappedSrc: srcChainIdForOrder,
+      originalDst: formData.chainOut,
+      mappedDst: dstChainIdForOrder,
+      message:
+        "Using EVM placeholder IDs for non-EVM chains, real IDs go in extension",
+    });
+
+    const srcSafetyDeposit = ethers.parseEther(
+      formData.srcSafetyDeposit || "0.1"
+    );
+    const dstSafetyDeposit = ethers.parseEther(
+      formData.dstSafetyDeposit || "0.1"
+    );
+
+    console.log("🔒 Building EscrowParams:", {
+      secretHash,
+      srcChainId: srcChainIdForOrder,
+      dstChainId: dstChainIdForOrder,
+      srcSafetyDeposit: srcSafetyDeposit.toString(),
+      dstSafetyDeposit: dstSafetyDeposit.toString(),
+    });
+
+    const escrowParams: EscrowParams = {
+      hashLock: HashLock.fromString(secretHash),
+      srcChainId: srcChainIdForOrder,
+      dstChainId: dstChainIdForOrder,
+      srcSafetyDeposit,
+      dstSafetyDeposit,
+      timeLocks: TimeLocks.new({
+        srcWithdrawal: BigInt(1800), // 30 minutes
+        srcPublicWithdrawal: BigInt(3600), // 1 hour
+        srcCancellation: BigInt(7200), // 2 hours
+        srcPublicCancellation: BigInt(14400), // 4 hours
+        dstWithdrawal: BigInt(900), // 15 minutes
+        dstPublicWithdrawal: BigInt(1800), // 30 minutes
+        dstCancellation: BigInt(3600), // 1 hour
+      }),
+    };
+
+    console.log("✅ EscrowParams created successfully");
+
+    // Build auction details
+    const auctionStartTime = BigInt(
+      Math.floor(Date.now() / 1000) +
+        parseInt(formData.auctionStartDelay || "0")
+    );
+    const auctionDuration = BigInt(parseInt(formData.decayPeriod) || 3600);
+
+    // Build auction - using exact pattern from working example
+    // NOTE: Using empty points array and initialRateBump=0 to match working resolver pattern
+
+    if (formData.auctionType === "dutch") {
+      console.log(
+        "🔧 Dutch auction requested but using flat rate (like working example):",
+        {
+          auctionDuration: auctionDuration.toString(),
+          startPricePremium: formData.startPricePremium,
+          minPriceDiscount: formData.minPriceDiscount,
+          note: "Using initialRateBump=0 and empty points array to match working example",
+        }
+      );
+    }
+
+    console.log("🔧 Creating AuctionDetails with:", {
+      startTime: auctionStartTime.toString(),
+      duration: auctionDuration.toString(),
+      initialRateBump: 0,
+      pointsCount: 0,
+      note: "Using exact pattern from working example",
+    });
+
+    // Validate all values before creating AuctionDetails
+    if (!auctionStartTime || !auctionDuration) {
+      throw new Error("Invalid auction timing parameters");
+    }
+
+    // No validation needed - using empty points array like working example
+
+    console.log("🔧 Final AuctionDetails constructor parameters:", {
+      startTime: auctionStartTime.toString(),
+      duration: auctionDuration.toString(),
+      initialRateBump: 0,
+      pointsCount: 0,
+      note: "Matching working example exactly",
+    });
+
+    const auction = new AuctionDetails({
+      startTime: auctionStartTime,
+      duration: auctionDuration,
+      initialRateBump: 0, // Always use 0 like the working example
+      points: [], // Always use empty array like the working example
+    });
+
+    // Build Details with proper resolver whitelist
+    const resolverAddress = RESOLVER_ADDRESS;
+
+    console.log("🔓 Setting up order whitelist:", {
+      resolverAddress,
+      allowFrom: "BigInt(0) (no time restriction)",
+      purpose: "Allow specific resolver to fulfill this order",
+    });
+
+    const resolvingStartTime = BigInt(0); // Use 0n like the working example
+
+    console.log("🔓 Building Details with whitelist:", {
+      resolverAddress,
+      allowFrom: "BigInt(0) (no time restriction)",
+      resolvingStartTime: resolvingStartTime.toString(),
+      bankFee: "10 bps (0.1%)",
+    });
+
+    const details: Details = {
+      auction,
+      fees: {
+        bankFee: BigInt(10), // 0.1% (10 basis points)
+        integratorFee: undefined, // No integrator fee for now
+      },
+      // SDK requires whitelist with resolver addresses in specific format
+      whitelist: [
+        {
+          address: EvmAddress.fromString(resolverAddress),
+          allowFrom: BigInt(0), // No time restriction - resolver can fulfill immediately
+        },
+      ],
+      resolvingStartTime,
+    };
+
+    console.log("✅ Details created successfully");
+
+    // Build Extra parameters
+    // Use proper 40-bit random for nonce (like working example)
+    const MAX_40_BIT = BigInt("0xffffffffff");
+    let nonce: bigint;
+    if (formData.nonce !== undefined && formData.nonce !== null) {
+      const provided = BigInt(formData.nonce);
+      if (provided <= MAX_40_BIT) {
+        nonce = provided;
+      } else {
+        console.warn(
+          "⚠️ Provided nonce is larger than 40-bit, generating new random 40-bit nonce instead.",
+          provided.toString()
+        );
+        nonce = BigInt(Math.floor(Math.random() * Number(MAX_40_BIT)));
+      }
+    } else {
+      nonce = BigInt(Math.floor(Math.random() * Number(MAX_40_BIT)));
+    }
+    const orderExpirationDelay = BigInt(parseInt(formData.deadline) * 3600);
+
+    console.log("⚙️ Building Extra parameters:", {
+      nonce: nonce.toString(),
+      nonceHex: `0x${nonce.toString(16)}`,
+      nonceBits: nonce.toString(16).length * 4,
+      orderExpirationDelay: orderExpirationDelay.toString(),
+      allowPartialFills: formData.partialFillAllowed || false,
+      allowMultipleFills: formData.multipleFillsAllowed || false,
+      deadline: formData.deadline,
+      maxAllowed: "0xffffffffff (40 bits)",
+    });
+
+    const extra: Extra = {
+      nonce,
+      orderExpirationDelay,
+      allowPartialFills: formData.partialFillAllowed || false,
+      allowMultipleFills: formData.multipleFillsAllowed || false,
+    };
+
+    console.log("✅ Extra parameters created successfully");
+
+    try {
+      console.log("🔧 Starting final order assembly...");
+
+      // Create NonEvmDstExtension for Aptos metadata if needed
+      const nonEvmExtension = createNonEvmDstExtension(formData);
+      console.log("🔧 NonEvmExtension created:", {
+        hasExtension: nonEvmExtension.extensionBytes !== "0x",
+        extensionLength: nonEvmExtension.extensionBytes.length,
+      });
+
+      // Create REAL CrossChainOrder using enhanced function with extension support
+      console.log("🔧 Calling createCrossChainOrderWithExtension...");
+      const crossChainOrder = createCrossChainOrderWithExtension(
+        ESCROW_FACTORY_ADDRESS,
+        orderInfo,
+        escrowParams,
+        details,
+        extra,
+        nonEvmExtension
+      );
+
+      console.log("✅ REAL CrossChainOrder created successfully!");
+      console.log("📋 Final order summary:", {
+        orderType: "CrossChainOrder",
+        hasExtension: !!(crossChainOrder as any)._combinedExtensionBytes,
+        merkleSecrets: !!merkleSecrets,
+      });
+
+      return {
+        order: crossChainOrder,
+        merkleSecrets, // Include merkle data for multiple fills
+      };
+    } catch (error) {
+      console.error("❌ Failed to build REAL CrossChainOrder:", error);
+      console.error("❌ Error details:", {
+        name: (error as Error).name,
+        message: (error as Error).message,
+        stack: (error as Error).stack,
+      });
+      throw new Error(
+        "Failed to build cross-chain order: " + (error as Error).message
+      );
     }
   }
 }
@@ -492,176 +934,41 @@ async function calculateAuctionPrices(
 // Get default form data
 export function getDefaultFormData(): FormData {
   return {
-    chainIn: 1,
-    chainOut: 1000,
-    sellToken: "",
-    sellAmount: "",
-    buyToken: "",
-    minBuyAmount: "",
-    deadline: "1",
-    // Dutch auction defaults
-    auctionType: "fixed",
+    chainIn: 1, // Ethereum
+    chainOut: 1000, // Aptos
+    sellToken: USDC_ADDRESS, // USDC on Ethereum
+    sellAmount: "1", // Default to 1 USDC
+    buyToken: USDC_APTOS_ADDRESS, // USDC on Aptos
+    minBuyAmount: "1", // Default to 1 USDC
+    deadline: "1", // 1 hour
+    // Dutch auction defaults (remove fixed option)
+    auctionType: "dutch",
     startPricePremium: "10", // 10% above market
     minPriceDiscount: "5", // 5% below market
     decayRate: "0.02", // 2% per second
-    decayPeriod: "5", // 5 seconds
+    decayPeriod: "300", // 5 minutes (reasonable test duration)
+    // Default destination address for Aptos
+    destinationAddress:
+      "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1",
   };
 }
 
-// ===== FUSION+ UTILITY FUNCTIONS =====
+// ===== CROSS-CHAIN ORDER UTILITY FUNCTIONS =====
 
 /**
- * Generate a random secret for atomic swaps using 1inch SDK patterns
+ * Get default cross-chain order parameters
  */
-export function generateSecret(): string {
-  return uint8ArrayToHex(ethers.randomBytes(32));
-}
-
-/**
- * Generate SHA256/Keccak256 hash of a secret using 1inch SDK
- */
-export function hashSecret(secret: string): string {
-  return HashLock.hashSecret(secret);
-}
-
-/**
- * Generate random salt for order uniqueness using 1inch SDK
- */
-export function generateSalt(): string {
-  return ethers.toBeHex(randBigInt(UINT_40_MAX), 32);
-}
-
-/**
- * Get default Fusion+ parameters
- */
-export function getDefaultFusionPlusParams() {
+export function getDefaultCrossChainParams() {
   return {
     // Default timelock values (in seconds)
     srcTimelock: 3600, // 1 hour for source chain (must be > dstTimelock)
     dstTimelock: 1800, // 30 minutes for destination chain
-    finalityLock: 300, // 5 minutes for chain reorganization protection
 
     // Default safety deposit amounts (in wei)
-    srcSafetyDeposit: ethers.parseEther("0.01").toString(), // 0.01 ETH equivalent
-    dstSafetyDeposit: ethers.parseEther("0.01").toString(), // 0.01 ETH equivalent
-
-    // Default fill thresholds for partial fills
-    fillThresholds: [25, 50, 75, 100],
+    srcSafetyDeposit: ethers.parseEther("0.1").toString(), // 0.1 ETH equivalent
+    dstSafetyDeposit: ethers.parseEther("0.1").toString(), // 0.1 ETH equivalent
 
     // Default auction duration (1 hour)
     auctionDuration: 3600,
   };
-}
-
-/**
- * Validate timelock sequence for security
- */
-export function validateTimelockSequence(fusionOrder: FusionPlusOrder): {
-  valid: boolean;
-  error?: string;
-} {
-  if (fusionOrder.srcTimelock <= fusionOrder.dstTimelock) {
-    return {
-      valid: false,
-      error:
-        "Source timelock must be greater than destination timelock for security",
-    };
-  }
-
-  if (fusionOrder.srcTimelock < 300) {
-    // Minimum 5 minutes
-    return {
-      valid: false,
-      error: "Source timelock must be at least 300 seconds (5 minutes)",
-    };
-  }
-
-  if (fusionOrder.dstTimelock < 180) {
-    // Minimum 3 minutes
-    return {
-      valid: false,
-      error: "Destination timelock must be at least 180 seconds (3 minutes)",
-    };
-  }
-
-  if (fusionOrder.finalityLock < 60) {
-    // Minimum 1 minute
-    return {
-      valid: false,
-      error: "Finality lock must be at least 60 seconds (1 minute)",
-    };
-  }
-
-  // Ensure expiration allows for timelock execution
-  const currentTime = Math.floor(Date.now() / 1000);
-  const maxTimelock = Math.max(
-    fusionOrder.srcTimelock,
-    fusionOrder.dstTimelock
-  );
-
-  if (
-    fusionOrder.expiration <=
-    currentTime + maxTimelock + fusionOrder.finalityLock
-  ) {
-    return {
-      valid: false,
-      error:
-        "Expiration must allow sufficient time for timelock execution and finality",
-    };
-  }
-
-  return { valid: true };
-}
-
-/**
- * Validate escrow target addresses based on chain
- */
-export function validateEscrowTargets(fusionOrder: FusionPlusOrder): {
-  valid: boolean;
-  error?: string;
-} {
-  // Validate source escrow target format
-  if (fusionOrder.srcChain === 1) {
-    // Ethereum
-    if (!ethers.isAddress(fusionOrder.srcEscrowTarget)) {
-      return {
-        valid: false,
-        error: "Invalid Ethereum address format for source escrow target",
-      };
-    }
-  } else if (fusionOrder.srcChain === 1000) {
-    // Aptos - validate as hex address (64 characters after 0x)
-    const aptosAddressRegex = /^0x[a-fA-F0-9]{64}$/;
-    if (!aptosAddressRegex.test(fusionOrder.srcEscrowTarget)) {
-      return {
-        valid: false,
-        error:
-          "Invalid Aptos address format for source escrow target. Please provide a valid 64-character hex address",
-      };
-    }
-  }
-
-  // Validate destination escrow target format
-  if (fusionOrder.dstChain === 1) {
-    // Ethereum
-    if (!ethers.isAddress(fusionOrder.dstEscrowTarget)) {
-      return {
-        valid: false,
-        error: "Invalid Ethereum address format for destination escrow target",
-      };
-    }
-  } else if (fusionOrder.dstChain === 1000) {
-    console.log("dstEscrowTarget", fusionOrder.dstEscrowTarget);
-    // Aptos - validate as hex address (64 characters after 0x)
-    const aptosAddressRegex = /^0x[a-fA-F0-9]{64}$/;
-    if (!aptosAddressRegex.test(fusionOrder.dstEscrowTarget)) {
-      return {
-        valid: false,
-        error:
-          "Invalid Aptos address format for destination escrow target. Please provide a valid 64-character hex address (e.g., 0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1)",
-      };
-    }
-  }
-
-  return { valid: true };
 }
