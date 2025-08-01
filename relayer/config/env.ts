@@ -14,6 +14,8 @@ export const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_ADDRESS || "";
 export const USDC_APTOS_ADDRESS =
   process.env.NEXT_PUBLIC_USDC_APTOS_ADDRESS || "";
 
+export const NEXT_PUBLIC_LOP_ADDRESS =
+  process.env.NEXT_PUBLIC_LOP_ADDRESS || "";
 // Server-only variables (with fallbacks for browser)
 export const CHAIN_ID = process.env.CHAIN_ID || "31337";
 export const APTOS_RPC_URL =

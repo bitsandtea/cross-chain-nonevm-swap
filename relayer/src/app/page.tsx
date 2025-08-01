@@ -6,6 +6,7 @@ import { useState } from "react";
 import { CreateOrderForm, OrdersMatrix } from "@/components";
 import { ToastProvider } from "@/components/ui";
 import { useIntents, useMetaMask } from "@/hooks";
+// Recovery scheduler is server-side only - remove client-side import
 import { getAllTokens, TokenMapping } from "@/lib/tokenMapping";
 
 export default function Home() {
@@ -15,6 +16,7 @@ export default function Home() {
     "active" | "expired" | "filled" | "cancelled" | "all"
   >("active");
   const { cancelIntent } = useIntents();
+  // Recovery stats removed - server-side only functionality
 
   // Available tokens with chain information
   const availableTokens = getAllTokens().map((token: TokenMapping) => ({
@@ -27,6 +29,8 @@ export default function Home() {
     setActiveTab("orders");
     // Refresh orders list
   };
+
+  // Recovery stats loading removed - server-side only functionality
 
   return (
     <div className="min-h-screen bg-black text-white relative overflow-hidden">
@@ -67,6 +71,8 @@ export default function Home() {
               </p>
             </div>
           </div>
+
+          {/* Recovery Stats - Server-side only */}
 
           {/* Enhanced Wallet Connection */}
           <div className="flex items-center space-x-4">

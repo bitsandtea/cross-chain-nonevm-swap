@@ -102,7 +102,7 @@ export class RecoveryScheduler {
     }
 
     // Check if intent has expired
-    if (intent.fusionOrder.expiration <= currentTime) {
+    if (intent.expiration && intent.expiration <= currentTime) {
       return true;
     }
 
@@ -136,14 +136,18 @@ export class RecoveryScheduler {
     }
 
     // Calculate timelock expiry based on creation time
-    const creationTime = Math.floor(intent.createdAt / 1000);
-    const maxTimelock = Math.max(
-      intent.fusionOrder.srcTimelock,
-      intent.fusionOrder.dstTimelock
-    );
+    const creationTime =
+      typeof intent.createdAt === "string"
+        ? Math.floor(new Date(intent.createdAt).getTime() / 1000)
+        : Math.floor(intent.createdAt / 1000);
 
-    const timelockExpiry =
-      creationTime + maxTimelock + intent.fusionOrder.finalityLock;
+    // Use actual timelock values from intent or fallback to defaults
+    const srcTimelock = intent.srcCancellation || 3600; // Use src cancellation timelock
+    const dstTimelock = intent.dstCancellation || 1800; // Use dst cancellation timelock
+    const finalityLock = intent.finalityLock || 300; // 5 minutes default
+
+    const maxTimelock = Math.max(srcTimelock, dstTimelock);
+    const timelockExpiry = creationTime + maxTimelock + finalityLock;
 
     return currentTime >= timelockExpiry;
   }
@@ -157,7 +161,10 @@ export class RecoveryScheduler {
   ): boolean {
     // Consider stuck if in processing for more than 1 hour
     const stuckThresholdSeconds = 3600; // 1 hour
-    const lastUpdateTime = Math.floor(intent.updatedAt / 1000);
+    const lastUpdateTime =
+      typeof intent.updatedAt === "string"
+        ? Math.floor(new Date(intent.updatedAt).getTime() / 1000)
+        : Math.floor(intent.updatedAt / 1000);
 
     return (
       intent.status === "processing" &&
@@ -202,7 +209,7 @@ export class RecoveryScheduler {
     intent: FusionPlusIntent,
     currentTime: number
   ): string {
-    if (intent.fusionOrder.expiration <= currentTime) {
+    if (intent.expiration && intent.expiration <= currentTime) {
       return "Intent deadline expired";
     }
 

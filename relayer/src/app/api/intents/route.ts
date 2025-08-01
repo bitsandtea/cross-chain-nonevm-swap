@@ -1,23 +1,12 @@
 import { db, initializeDatabase, saveDatabase } from "@/lib/database";
-import { FusionPlusIntent, FusionPlusIntentRequest } from "@/lib/types";
-import {
-  validateAptosBalance,
-  validateEVMBalance,
-  validateFusionPlusOrder,
-  validateNonce,
-  verifyFusionOrderSignature,
-} from "@/lib/validation";
+import { FusionPlusIntent } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import {
-  APTOS_RPC_URL,
-  CHAIN_ID,
-  ETH_FACTORY_ADDRESS,
-} from "../../../../config/env";
 
 // Initialize database
 initializeDatabase();
 
+/*
 // Handle new CrossChainOrder format
 async function handleCrossChainOrder(body: {
   order: any;
@@ -110,90 +99,92 @@ async function handleCrossChainOrder(body: {
     );
   }
 }
+  */
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // Check if this is the new CrossChainOrder format or legacy FusionPlus format
-    const isNewFormat =
-      body.order && body.extension && body.signature && body.hash;
-    const isLegacyFormat =
-      body.fusionOrder &&
-      body.signature &&
-      body.nonce !== undefined &&
-      body.secret;
-
-    if (!isNewFormat && !isLegacyFormat) {
+    /*
+      order: {
+    maker: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
+    makerAsset: '0xf0014cbe67b3ab638bdaa2e2cb1b531935829e50',
+    takerAsset: '0xda0000d4000015a526378bb6fafc650cea5966f8',
+    makerTraits: '33471150795161712739625987854704219449736943044941433056043525232457238446080',
+    salt: '323889556686748963939587308947877716729674401837101',
+    makingAmount: '1000000',
+    takingAmount: '1000000',
+    receiver: '0x0000000000000000000000000000000000000000'
+  },
+  extension: {
+    makerAssetSuffix: '0x',
+    takerAssetSuffix: '0x',
+    makingAmountData: '0xdb88cfc18875e3ed6797de31dfaae31f942231f200000000000000688d203e00012c000000',
+    takingAmountData: '0xdb88cfc18875e3ed6797de31dfaae31f942231f200000000000000688d203e00012c000000',
+    predicate: '0x',
+    makerPermit: '0x',
+    preInteraction: '0x',
+    postInteraction: '0xdb88cfc18875e3ed6797de31dfaae31f942231f20000000035b0a1a7be3bdab98e000000087443942c2e21ce558562a6f3a8826d1570f5b6fb403669af7664e8d27eeb2fab000000000000000000000000000000000000000000000000000000000000003800000000000000000000000000000000000000000000000000000000000000000000000000000000002386f26fc100000000000000000000002386f26fc100000000000000000065000000640000000a0000007a00000079000000780000000a',
+    customData: '0x'
+  },
+  signature: '0x88af0e2244f4d3fb69734edbbb9aaf04e8c36337df20f821d9fb428caf946b506a2ab07b70cedf9f88e9f3cd6567ad9a5e8270a7de5a691fc4e273c9559a00a91b',
+  hash: '0xec536170adc9a43efde6c13e4ad0f274eeae745ce508c0d8beb76a3017f5b770'
+}
+  */
+    console.log("Post hit with body: ", body);
+    if (!body.order || !body.signature || !body.hash) {
       return NextResponse.json(
-        {
-          error:
-            "Invalid payload format. Expected either new format (order, extension, signature, hash) or legacy format (fusionOrder, signature, nonce, secret)",
-        },
+        { error: "Missing order, signature, nonce, or hash" },
         { status: 400 }
       );
     }
 
-    // Handle new CrossChainOrder format
-    if (isNewFormat) {
-      return await handleCrossChainOrder(body);
-    }
+    // Extract additional escrow fields from request body
+    const auctionStartTime =
+      body.auctionStartTime || Math.floor(Date.now() / 1000);
+    const auctionDuration = body.auctionDuration || 3600;
+    const startRate = body.startRate || "1.0";
+    const endRate = body.endRate || "1.0";
+    const finalityLock = body.finalityLock || 300;
+    const fillThresholds = body.fillThresholds || [25, 50, 75, 100];
+    const expiration = body.expiration || Math.floor(Date.now() / 1000) + 86400;
 
-    // Handle legacy FusionPlus format (for backward compatibility)
-    const legacyBody: FusionPlusIntentRequest = body;
+    // Extract chain IDs from request body or use defaults
+    const srcChain = body.srcChain || 1; // Default to Ethereum
+    const dstChain = body.dstChain || 1000; // Default to Aptos
 
-    // Validate request structure for legacy format
-    if (
-      !legacyBody.fusionOrder ||
-      !legacyBody.signature ||
-      legacyBody.nonce === undefined ||
-      !legacyBody.secret
-    ) {
-      return NextResponse.json(
-        { error: "Missing fusionOrder, signature, nonce, or secret" },
-        { status: 400 }
-      );
-    }
+    // Extract timelock data from request body or use defaults
+    const srcTimelock = body.srcTimelock || 120;
+    const dstTimelock = body.dstTimelock || 100;
+    const srcWithdrawal = body.srcWithdrawal || 10;
+    const srcPublicWithdrawal = body.srcPublicWithdrawal || 120;
+    const srcCancellation = body.srcCancellation || 121;
+    const srcPublicCancellation = body.srcPublicCancellation || 122;
+    const dstWithdrawal = body.dstWithdrawal || 10;
+    const dstPublicWithdrawal = body.dstPublicWithdrawal || 100;
+    const dstCancellation = body.dstCancellation || 101;
+    const srcSafetyDeposit = body.srcSafetyDeposit || "10000000000000000"; // 0.01 ETH default
+    const dstSafetyDeposit = body.dstSafetyDeposit || "10000000000000000"; // 0.01 ETH default
 
-    // Validate Fusion+ order
-    const validation = validateFusionPlusOrder(legacyBody.fusionOrder);
-    if (!validation.valid) {
-      return NextResponse.json({ error: validation.error }, { status: 400 });
-    }
-
-    // Validate that secret matches secretHash
-    const { HashLock } = require("@1inch/cross-chain-sdk");
-    const computedHash = HashLock.hashSecret(legacyBody.secret);
-    console.log(
-      `🔐 Secret validation: provided hash=${legacyBody.fusionOrder.secretHash}, computed hash=${computedHash}`
-    );
-    if (computedHash !== legacyBody.fusionOrder.secretHash) {
-      return NextResponse.json(
-        { error: "Secret does not match secretHash" },
-        { status: 400 }
-      );
-    }
+    // Extract escrow targets from request body or use defaults
+    const srcEscrowTarget = body.srcEscrowTarget || body.order.maker;
+    const dstEscrowTarget = body.dstEscrowTarget || body.order.maker;
 
     // Verify signature and get user address
-    const chainId = parseInt(CHAIN_ID);
-    console.log("Using chainId for signature verification:", chainId);
-    const userAddress = await verifyFusionOrderSignature(
-      legacyBody.fusionOrder,
-      legacyBody.nonce,
-      legacyBody.signature,
-      chainId
-    );
+    // const userAddress = await verifyFusionOrderSignature(
+    //   body.order,
+    //   body.signature
+    // );
 
-    // Verify maker address matches signature
-    if (
-      userAddress.toLowerCase() !== legacyBody.fusionOrder.maker.toLowerCase()
-    ) {
-      return NextResponse.json(
-        { error: "Signature does not match maker address" },
-        { status: 400 }
-      );
-    }
+    // // Verify maker address matches signature
+    // if (userAddress.toLowerCase() !== body.order.maker.toLowerCase()) {
+    //   return NextResponse.json(
+    //     { error: "Signature does not match maker address" },
+    //     { status: 400 }
+    //   );
+    // }
 
+    /*
     // Validate nonce - accept any valid nonce from frontend
     if (!validateNonce(userAddress, legacyBody.nonce)) {
       return NextResponse.json(
@@ -233,33 +224,49 @@ export async function POST(req: NextRequest) {
 
     // Calculate orderHash for the legacy order
     const orderHash = legacyBody.fusionOrder.salt || `0x${Date.now()}`;
-
+*/
     // Create Fusion+ intent
     const intent: FusionPlusIntent = {
       id: uuidv4(),
-      orderHash: orderHash,
-      fusionOrder: legacyBody.fusionOrder,
-      signature: legacyBody.signature,
+      orderHash: body.hash,
+      order: body.order,
+      signature: body.signature,
       status: "pending",
       createdAt: Date.now(),
       updatedAt: Date.now(),
       resolverClaims: [],
-      nonce: legacyBody.nonce,
-      // Per spec G-2: Store only hash, NOT the secret
-      secretHash: legacyBody.fusionOrder.secretHash,
-      // Note: secret is validated but NOT stored for security
+      secretHash: body.hash,
+      // Add chain IDs
+      srcChain,
+      dstChain,
+      // Add escrow fields to intent
+      auctionStartTime,
+      auctionDuration,
+      startRate,
+      endRate,
+      finalityLock,
+      fillThresholds,
+      expiration,
+      // Add timelock fields
+      srcTimelock,
+      dstTimelock,
+      srcWithdrawal,
+      srcPublicWithdrawal,
+      srcCancellation,
+      srcPublicCancellation,
+      dstWithdrawal,
+      dstPublicWithdrawal,
+      dstCancellation,
+      srcSafetyDeposit,
+      dstSafetyDeposit,
+      // Add escrow targets
+      srcEscrowTarget,
+      dstEscrowTarget,
     };
 
     // Save to database
     db.data!.intents.push(intent);
     await saveDatabase();
-
-    // Dutch auction is handled on-chain by LOP contract after deploySrc
-    if (intent.fusionOrder.startRate !== "0") {
-      console.log(
-        `🎯 Dutch auction Fusion+ order ${intent.id} created - auction will start on-chain after deploySrc`
-      );
-    }
 
     return NextResponse.json({
       success: true,
@@ -307,21 +314,20 @@ export async function GET(req: NextRequest) {
     if (chainIn) {
       const chainInNum = parseInt(chainIn);
       intents = intents.filter(
-        (intent) => intent.fusionOrder.srcChain === chainInNum
+        (intent) => intent.order.srcChain === chainInNum
       );
     }
 
     if (chainOut) {
       const chainOutNum = parseInt(chainOut);
       intents = intents.filter(
-        (intent) => intent.fusionOrder.dstChain === chainOutNum
+        (intent) => intent.order.dstChain === chainOutNum
       );
     }
 
     if (user) {
       intents = intents.filter(
-        (intent) =>
-          intent.fusionOrder.maker.toLowerCase() === user.toLowerCase()
+        (intent) => intent.order.maker.toLowerCase() === user.toLowerCase()
       );
     }
 

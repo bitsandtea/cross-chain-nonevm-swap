@@ -5,7 +5,6 @@ import {
   verifyResolverAuthentication,
 } from "@/lib/validation";
 import { NextRequest, NextResponse } from "next/server";
-import { CHAIN_ID } from "../../../../../config/env";
 
 export async function GET(
   req: NextRequest,
@@ -89,13 +88,9 @@ export async function DELETE(
     }
 
     // Verify cancellation signature
-    const chainId = parseInt(CHAIN_ID);
-    console.log("Using chainId for cancel signature verification:", chainId);
     const userAddress = await verifyCancelSignature(
       intentId,
-      intent.nonce,
-      body.signature,
-      chainId
+      body.signature
     );
 
     // Check if the signer is the intent maker

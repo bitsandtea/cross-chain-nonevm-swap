@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
 import { toast } from "react-hot-toast";
-import { ETH_FACTORY_ADDRESS, RPC_URL } from "../../config/env";
+import { NEXT_PUBLIC_LOP_ADDRESS, RPC_URL } from "../../config/env";
 import { getTokenInfo as getStaticTokenInfo } from "./tokenMapping";
 
 // ERC20 ABI for allowance and approval
@@ -12,9 +12,6 @@ export const ERC20_ABI = [
   "function decimals() view returns (uint8)",
   "function name() view returns (string)",
 ];
-
-// Factory address for allowance checking
-export const FACTORY_ADDRESS = ETH_FACTORY_ADDRESS;
 
 export interface AllowanceState {
   currentAllowance: bigint;
@@ -63,13 +60,6 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
 
   // For EVM addresses, validate and fetch from contract
   try {
-    console.log(
-      "Validating token address:",
-      tokenAddress,
-      "Type:",
-      typeof tokenAddress
-    );
-
     if (!isEVMAddress(tokenAddress)) {
       console.error("Address validation failed for:", tokenAddress);
       throw new Error("Invalid EVM token address");
@@ -94,8 +84,6 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
       symbol,
       name,
     };
-
-    console.log("Token info fetched successfully:", tokenInfo);
 
     // Cache the result
     tokenInfoCache.set(cacheKey, tokenInfo);
@@ -194,7 +182,7 @@ export async function checkTokenAllowance(
     // Use call with explicit error handling
     const currentAllowance = await tokenContract.allowance(
       account,
-      FACTORY_ADDRESS
+      NEXT_PUBLIC_LOP_ADDRESS
     );
 
     const hasEnoughAllowance = currentAllowance >= requiredAmount;
@@ -245,7 +233,10 @@ export async function approveTokenAllowance(
 
     toast.loading("Approve transaction pending...", { id: "approval" });
 
-    const tx = await tokenContract.approve(FACTORY_ADDRESS, requiredAmount);
+    const tx = await tokenContract.approve(
+      NEXT_PUBLIC_LOP_ADDRESS,
+      requiredAmount
+    );
 
     toast.loading("Waiting for confirmation...", { id: "approval" });
     await tx.wait();

@@ -7,7 +7,7 @@ import { X } from "lucide-react";
 interface OrderCardProps {
   intent: FusionPlusIntent;
   isUserIntent: boolean;
-  onCancel: (intentId: string, nonce: number) => void;
+  onCancel: (intentId: string) => void;
 }
 
 export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
@@ -24,7 +24,8 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
     amountIn?: string;
     minAmountOut?: string;
   };
-  const fusionOrder = intent.fusionOrder;
+  // Access order data from the new structure
+  const order = intent.order;
 
   const availableTokens = getAllTokens().map((token: TokenMapping) => ({
     ...token,
@@ -34,9 +35,32 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
 
   // Get token info helper
   const getTokenInfoForChain = (address: string, chainId: number) => {
-    return availableTokens.find(
-      (token) => token.address === address && token.chainId === chainId
+    // First try exact match
+    let token = availableTokens.find(
+      (token) =>
+        token.address.toLowerCase() === address.toLowerCase() &&
+        token.chainId === chainId
     );
+
+    // If not found, try to match by address only (ignore chainId)
+    if (!token) {
+      token = availableTokens.find(
+        (token) => token.address.toLowerCase() === address.toLowerCase()
+      );
+    }
+
+    // If still not found, try to find any token for the given chain
+    if (!token) {
+      if (chainId === 1000) {
+        // Look for any Aptos token
+        token = availableTokens.find((t) => t.localAddress.includes("::"));
+      } else {
+        // Look for any EVM token
+        token = availableTokens.find((t) => !t.localAddress.includes("::"));
+      }
+    }
+
+    return token;
   };
 
   // Format balance for display
@@ -44,24 +68,47 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
     try {
       // Ensure balance is treated as a BigInt string
       const balanceBigInt = BigInt(balance);
-      const formatted = parseFloat(ethers.formatUnits(balanceBigInt, decimals));
-      return formatted.toFixed(4);
+      const formatted = ethers.formatUnits(balanceBigInt, decimals);
+      const num = parseFloat(formatted);
+
+      // Better formatting for different magnitudes
+      if (num === 0) return "0";
+      if (num < 0.0001) return num.toExponential(2);
+      if (num < 1) return num.toFixed(6);
+      if (num < 1000) return num.toFixed(4);
+      return num.toFixed(2);
     } catch {
-      return "0.0000";
+      return "0";
     }
   };
 
+  // Determine chain IDs based on address format
+  const getChainIdFromAddress = (address: string): number => {
+    if (address.includes("::")) return 1000; // Aptos format
+
+    // Check if address exists in our token mapping
+    const token = availableTokens.find(
+      (t) => t.localAddress.toLowerCase() === address.toLowerCase()
+    );
+
+    if (token) {
+      return token.localAddress.includes("::") ? 1000 : 1;
+    }
+
+    return 1; // Default to Ethereum
+  };
+
   const sellTokenInfo = getTokenInfoForChain(
-    fusionOrder?.makerAsset || intentWithLegacy.sellToken || "",
-    fusionOrder?.srcChain || intentWithLegacy.chainIn || 1
+    order?.makerAsset || intentWithLegacy.sellToken || "",
+    getChainIdFromAddress(order?.makerAsset || "")
   );
   const buyTokenInfo = getTokenInfoForChain(
-    fusionOrder?.takerAsset || intentWithLegacy.buyToken || "",
-    fusionOrder?.dstChain || intentWithLegacy.chainOut || 1
+    order?.takerAsset || intentWithLegacy.buyToken || "",
+    getChainIdFromAddress(order?.takerAsset || "")
   );
 
   const isDutchAuction =
-    fusionOrder?.startRate !== "0" || intentWithLegacy.auctionType === "dutch";
+    intent.startRate !== "1.0" || intentWithLegacy.auctionType === "dutch";
 
   return (
     <div
@@ -93,7 +140,7 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
         </div>
         {isUserIntent && intent.status === "pending" && (
           <button
-            onClick={() => onCancel(intent.id, intent.nonce)}
+            onClick={() => onCancel(intent.id)}
             className="text-sm font-mono text-red-400 hover:text-red-300 transition-colors p-2 hover:bg-red-400/10 rounded-lg"
           >
             <X className="w-4 h-4" />
@@ -127,7 +174,7 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
           <span>
             {sellTokenInfo
               ? formatBalance(
-                  fusionOrder?.makingAmount || intentWithLegacy.amountIn || "0",
+                  order?.makingAmount || intentWithLegacy.amountIn || "0",
                   sellTokenInfo.decimals
                 )
               : "N/A"}{" "}
@@ -143,9 +190,7 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
           <span>
             {buyTokenInfo
               ? formatBalance(
-                  fusionOrder?.takingAmount ||
-                    intentWithLegacy.minAmountOut ||
-                    "0",
+                  order?.takingAmount || intentWithLegacy.minAmountOut || "0",
                   buyTokenInfo.decimals
                 )
               : "N/A"}{" "}
@@ -159,8 +204,13 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
         <div className="flex justify-between">
           <span className="text-gray-400">CHAINS:</span>
           <span>
-            {fusionOrder?.srcChain || intentWithLegacy.chainIn} →{" "}
-            {fusionOrder?.dstChain || intentWithLegacy.chainOut}
+            {getChainIdFromAddress(order?.makerAsset || "") === 1000
+              ? "Aptos"
+              : "EVM"}{" "}
+            →{" "}
+            {getChainIdFromAddress(order?.takerAsset || "") === 1000
+              ? "Aptos"
+              : "EVM"}
           </span>
         </div>
         <div className="flex justify-between">
@@ -177,11 +227,11 @@ export function OrderCard({ intent, isUserIntent, onCancel }: OrderCardProps) {
             {intent.status}
           </span>
         </div>
-        {fusionOrder?.expiration ? (
+        {intent.expiration ? (
           <div className="flex justify-between items-center">
             <span className="text-gray-400">EXPIRES:</span>
             <CountdownTimer
-              expiration={parseInt(fusionOrder.expiration.toString())}
+              expiration={parseInt(intent.expiration.toString())}
               className="ml-2"
             />
           </div>

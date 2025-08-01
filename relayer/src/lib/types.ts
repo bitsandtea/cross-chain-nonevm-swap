@@ -68,7 +68,7 @@ export interface ResolverClaim {
 // New simplified Intent structure (Fusion+ only)
 export interface FusionPlusIntent {
   id: string;
-  fusionOrder: FusionPlusOrder;
+  order: FusionPlusOrder;
   signature: string;
   status:
     | "open" // Phase 1: Order open and available for resolvers
@@ -85,7 +85,6 @@ export interface FusionPlusIntent {
   createdAt: string | number; // Support both string and number for backward compatibility
   updatedAt: string | number; // Support both string and number for backward compatibility
   resolverClaims: ResolverClaim[];
-  nonce: number; // Moved from fusionOrder to intent level for signature
   // Fusion+ protocol metadata
   phase?: 1 | 2 | 3 | 4; // Current protocol phase
   escrowSrcTxHash?: string; // Source chain escrow transaction
@@ -102,6 +101,26 @@ export interface FusionPlusIntent {
   hash?: string; // Secret hash for atomic swaps
   sdkOrder?: any; // Full 1inch SDK CrossChainOrder object
   extension?: any; // CrossChainOrder extension data
+
+  // Escrow and auction fields
+  auctionStartTime?: number;
+  auctionDuration?: number;
+  startRate?: string;
+  endRate?: string;
+  finalityLock?: number;
+  fillThresholds?: number[];
+  expiration?: number;
+
+  // Timelock fields
+  srcWithdrawal?: number;
+  srcPublicWithdrawal?: number;
+  srcCancellation?: number;
+  srcPublicCancellation?: number;
+  dstWithdrawal?: number;
+  dstPublicWithdrawal?: number;
+  dstCancellation?: number;
+  srcSafetyDeposit?: string;
+  dstSafetyDeposit?: string;
 }
 
 export interface FusionPlusIntentRequest {
@@ -167,13 +186,9 @@ export const FUSION_ORDER_TYPE = {
     { name: "fillThresholds", type: "uint256[]" },
     { name: "salt", type: "string" },
     { name: "expiration", type: "uint256" },
-    { name: "nonce", type: "uint256" },
   ],
 };
 
 export const CANCEL_TYPE = {
-  Cancel: [
-    { name: "intentId", type: "string" },
-    { name: "nonce", type: "uint256" },
-  ],
+  Cancel: [{ name: "intentId", type: "string" }],
 };

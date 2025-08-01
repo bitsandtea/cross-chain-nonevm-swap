@@ -128,12 +128,12 @@ export function OrdersMatrix({ account, filter, onCancel }: OrdersMatrixProps) {
               amountIn?: string;
               minAmountOut?: string;
             };
-            const fusionOrder = intent.fusionOrder;
+            const order = intent.order;
 
             const isUserIntent =
               (account &&
                 (
-                  fusionOrder?.maker || intentWithLegacy.userAddress
+                  order?.maker || intentWithLegacy.userAddress
                 )?.toLowerCase() === account.toLowerCase()) ||
               false;
 
@@ -142,7 +142,7 @@ export function OrdersMatrix({ account, filter, onCancel }: OrdersMatrixProps) {
                 key={intent.id}
                 intent={intent}
                 isUserIntent={isUserIntent}
-                onCancel={onCancel}
+                onCancel={(intentId: string) => onCancel(intentId, 0)} // Pass dummy nonce
               />
             );
           })

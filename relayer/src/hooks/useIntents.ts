@@ -25,7 +25,7 @@ export function useIntents() {
     }
   };
 
-  const cancelIntent = async (intentId: string, nonce: number) => {
+  const cancelIntent = async (intentId: string) => {
     try {
       if (typeof window.ethereum === "undefined") {
         throw new Error("MetaMask not found");
@@ -34,24 +34,18 @@ export function useIntents() {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
 
-      // Get current network chain ID
-      const network = await provider.getNetwork();
-      const currentChainId = Number(network.chainId);
-
-      // Create dynamic domain
+      // Create domain
       const domain = {
         name: "CrossChainFusionPlus",
         version: "1",
-        chainId: currentChainId,
         verifyingContract: ZERO_ADDRESS,
       };
 
-      const message = { intentId, nonce };
+      const message = { intentId };
       const signature = await signer.signTypedData(
         domain,
         {
-          IntentId: [{ name: "intentId", type: "string" }],
-          Nonce: [{ name: "nonce", type: "uint256" }],
+          Cancel: [{ name: "intentId", type: "string" }],
         },
         message
       );
@@ -96,9 +90,12 @@ export function useIntents() {
         case "active":
           return intent.status === "pending";
         case "expired":
-          // Check if expiration has passed
-          const expiration = intent.fusionOrder?.expiration;
-          return expiration && parseInt(expiration.toString()) < now;
+          // Check if expiration has passed or status is expired
+          const expiration = intent.expiration;
+          return (
+            intent.status === "expired" ||
+            (expiration && parseInt(expiration.toString()) < now)
+          );
         case "filled":
           return intent.status === "filled" || intent.status === "completed";
         case "cancelled":

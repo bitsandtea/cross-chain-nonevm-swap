@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import { RPC_URL, ZERO_ADDRESS } from "../../config/env";
 import { isTokenWhitelisted } from "./database";
 import { getTokenInfo as getStaticTokenInfo } from "./tokenMapping";
-import { CANCEL_TYPE, FUSION_ORDER_TYPE, FusionPlusOrder } from "./types";
+import { CANCEL_TYPE, FusionPlusOrder } from "./types";
 
 const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
@@ -64,8 +64,6 @@ async function getServerTokenInfo(tokenAddress: string): Promise<TokenInfo> {
 
   // For EVM addresses, validate and fetch from contract
   try {
-    console.log("Server: Validating token address:", tokenAddress);
-
     if (!isEVMAddress(tokenAddress)) {
       console.error("Server: Address validation failed for:", tokenAddress);
       throw new Error("Invalid EVM token address");
@@ -92,8 +90,6 @@ async function getServerTokenInfo(tokenAddress: string): Promise<TokenInfo> {
       name,
     };
 
-    console.log("Server: Token info fetched successfully:", tokenInfo);
-
     // Cache the result
     serverTokenInfoCache.set(cacheKey, tokenInfo);
     return tokenInfo;
@@ -108,54 +104,75 @@ async function getServerTokenInfo(tokenAddress: string): Promise<TokenInfo> {
   }
 }
 
-// Create dynamic domain for signature verification
-function createDomain(chainId: number): {
+// Create domain for signature verification
+function createDomain(): {
   name: string;
   version: string;
-  chainId: number;
   verifyingContract: string;
 } {
   return {
     name: "CrossChainFusionPlus",
     version: "1",
-    chainId: chainId,
     verifyingContract: ZERO_ADDRESS,
   };
 }
 
 export async function verifyFusionOrderSignature(
-  fusionOrder: FusionPlusOrder,
-  nonce: number,
-  signature: string,
-  chainId: number
+  order: any,
+  signature: string
 ): Promise<string> {
-  const domain = createDomain(chainId);
-  console.log("Verifying Fusion+ order signature with domain:", domain);
-
-  // Create the message object for signing
-  const message = {
-    ...fusionOrder,
-    nonce,
+  // Use standard 1inch v5 domain
+  const domain = {
+    name: "1inch Aggregation Router",
+    version: "5",
+    chainId: 1,
+    verifyingContract: process.env.NEXT_PUBLIC_LOP_ADDRESS,
   };
 
-  const digest = ethers.TypedDataEncoder.hash(
-    domain,
-    FUSION_ORDER_TYPE,
-    message
-  );
+  // Standard 1inch order structure - include all fields present in the order
+  const message = {
+    salt: order.salt,
+    maker: order.maker,
+    receiver: order.receiver,
+    makerAsset: order.makerAsset,
+    takerAsset: order.takerAsset,
+    makingAmount: order.makingAmount,
+    takingAmount: order.takingAmount,
+    makerTraits: order.makerTraits,
+  };
+
+  // Standard 1inch order type
+  const types = {
+    Order: [
+      { name: "salt", type: "uint256" },
+      { name: "maker", type: "address" },
+      { name: "receiver", type: "address" },
+      { name: "makerAsset", type: "address" },
+      { name: "takerAsset", type: "address" },
+      { name: "makingAmount", type: "uint256" },
+      { name: "takingAmount", type: "uint256" },
+      { name: "makerTraits", type: "uint256" },
+    ],
+  };
+
+  const digest = ethers.TypedDataEncoder.hash(domain, types, message);
   const recoveredAddress = ethers.recoverAddress(digest, signature);
-  console.log("Recovered address:", recoveredAddress);
+
+  console.log("Signature verification:");
+  console.log("- Domain:", domain);
+  console.log("- Message:", message);
+  console.log("- Recovered address:", recoveredAddress);
+  console.log("- Expected maker:", order.maker);
+
   return recoveredAddress;
 }
 
 export async function verifyCancelSignature(
   intentId: string,
-  nonce: number,
-  signature: string,
-  chainId: number
+  signature: string
 ): Promise<string> {
-  const domain = createDomain(chainId);
-  const message = { intentId, nonce };
+  const domain = createDomain();
+  const message = { intentId };
   const digest = ethers.TypedDataEncoder.hash(domain, CANCEL_TYPE, message);
   const recoveredAddress = ethers.recoverAddress(digest, signature);
   return recoveredAddress;
