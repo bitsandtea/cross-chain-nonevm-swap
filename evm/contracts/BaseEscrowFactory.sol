@@ -95,7 +95,8 @@ abstract contract BaseEscrowFactory is IEscrowFactory, ResolverValidationExtensi
             token: order.makerAsset,
             amount: makingAmount,
             safetyDeposit: extraDataArgs.deposits >> 128,
-            timelocks: extraDataArgs.timelocks.setDeployedAt(block.timestamp)
+                        timelocks: extraDataArgs.timelocks.setDeployedAt(block.timestamp),
+            parameters: ""
         });
 
         DstImmutablesComplement memory immutablesComplement = DstImmutablesComplement({

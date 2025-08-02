@@ -2,133 +2,146 @@
 
 pragma solidity 0.8.23;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import "hardhat/console.sol";
 
-import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
-import { TakerTraits, TakerTraitsLib } from "@1inch/limit-order-protocol-contract/contracts/libraries/TakerTraitsLib.sol";
-import { RevertReasonForwarder } from "@1inch/solidity-utils/contracts/libraries/RevertReasonForwarder.sol";
-import { Address, AddressLib } from "@1inch/solidity-utils/contracts/libraries/AddressLib.sol";
+import {IOrderMixin} from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
+import {TakerTraits} from "@1inch/limit-order-protocol-contract/contracts/libraries/TakerTraitsLib.sol";
 
-import { IBaseEscrow } from "./interfaces/IBaseEscrow.sol";
-import { IEscrowFactory } from "./interfaces/IEscrowFactory.sol";
-import { Timelocks, TimelocksLib } from "./libraries/TimelocksLib.sol";
+import {IResolverExample} from "./interfaces/IResolverExample.sol";
+import {RevertReasonForwarder} from "./libraries/RevertReasonForwarder.sol";
+import {IEscrowFactory} from "./interfaces/IEscrowFactory.sol";
+import {IBaseEscrow} from "./interfaces/IBaseEscrow.sol";
+import {TimelocksLib, Timelocks} from "./libraries/TimelocksLib.sol";
+import {Address} from "@1inch/solidity-utils/contracts/libraries/AddressLib.sol";
+import {IEscrow} from "./interfaces/IEscrow.sol";
+import {ImmutablesLib} from "./libraries/ImmutablesLib.sol";
 
 /**
- * @title Production Resolver contract for Fusion+ cross-chain swaps
- * @notice Integrates with 1inch LOP to atomically execute swaps and deploy escrows
+ * @title Sample implementation of a Resolver contract for cross-chain swap.
+ * @dev It is important when deploying an escrow on the source chain to send the safety deposit and deploy the escrow in the same
+ * transaction, since the address of the escrow depends on the block.timestamp.
+ * You can find sample code for this in the {ResolverExample-deploySrc}.
+ *
+ * @custom:security-contact security@1inch.io
  */
 contract Resolver is Ownable {
-    using TakerTraitsLib for TakerTraits;
-    using AddressLib for Address;
+    using ImmutablesLib for IBaseEscrow.Immutables;
+    using TimelocksLib for Timelocks;
+
+    error InvalidLength();
+    error LengthMismatch();
 
     IEscrowFactory private immutable _FACTORY;
     IOrderMixin private immutable _LOP;
 
-    error InsufficientSafetyDeposit(); 
-    error LengthMismatch();
-
-    /**
-     * @notice Emitted when a source escrow is deployed via LOP integration
-     * @param orderHash The hash of the LOP order
-     * @param escrowAddr The address of the deployed escrow
-     * @param fillAmount The amount filled in the order
-     * @param safetyDeposit The safety deposit sent with the escrow
-     */
-    event SrcEscrowDeployed(
-        bytes32 indexed orderHash,
-        address indexed escrowAddr,
-        uint256 fillAmount,
-        uint256 safetyDeposit
-    );
-
-    constructor(IEscrowFactory factory, IOrderMixin lop, address initialOwner) Ownable(initialOwner) {
+ constructor(IEscrowFactory factory, IOrderMixin lop, address initialOwner) Ownable(initialOwner) {
+        console.log("Resolver: Constructor called");
+        console.log("Resolver: Factory address:", address(factory));
+        console.log("Resolver: LOP address:", address(lop));
+        console.log("Resolver: Initial owner:", initialOwner);
         _FACTORY = factory;
         _LOP = lop;
+        console.log("Resolver: Constructor completed");
     }
 
-    receive() external payable {} // solhint-disable-line no-empty-blocks
+    receive() external payable {
+        console.log("Resolver: Received", msg.value, "wei from", msg.sender);
+    } // solhint-disable-line no-empty-blocks
 
     /**
-     * @notice Deploys source escrow via LOP order filling
-     * @dev Forwards msg.value as safety deposit, sets _ARGS_HAS_TARGET bit, calls LOP.fillOrder
-     * @param immutables Pre-built immutables for escrow deployment
-     * @param order The LOP order to fill
-     * @param r The r component of the order signature
-     * @param vs The vs component of the order signature
-     * @param fillAmount The amount to fill from the order
-     * @param takerTraits Pre-built taker traits with _ARGS_HAS_TARGET bit set
-     * @param args Additional arguments for the order fill (encoded target + interaction)
+     * @notice See {IResolverExample-deploySrc}.
      */
     function deploySrc(
         IBaseEscrow.Immutables calldata immutables,
         IOrderMixin.Order calldata order,
         bytes32 r,
         bytes32 vs,
-        uint256 fillAmount,
+        uint256 amount,
         TakerTraits takerTraits,
         bytes calldata args
     ) external payable onlyOwner {
-        // Validate safety deposit is provided
-        if (msg.value == 0) revert InsufficientSafetyDeposit();
+        console.log("Resolver: deploySrc called by", msg.sender);
+        console.log("Resolver: Safety deposit amount:", immutables.safetyDeposit);
+        console.log("Resolver: Order maker address");
+        console.log("Resolver: Order taker asset address");
+        console.log("Resolver: Amount:", amount);
+        console.log("Resolver: Block timestamp:", block.timestamp);
         
-        // Validate that safety deposit matches immutables
-        if (msg.value != immutables.safetyDeposit) revert InsufficientSafetyDeposit();
-        
-        // Validate that fill amount matches immutables
-        if (fillAmount != immutables.amount) revert LengthMismatch();
-
-        // Update timelocks with deployment timestamp
         IBaseEscrow.Immutables memory immutablesMem = immutables;
         immutablesMem.timelocks = TimelocksLib.setDeployedAt(immutables.timelocks, block.timestamp);
-
-        // Pre-compute escrow address and send safety deposit
-        address computedEscrow = _FACTORY.addressOfEscrowSrc(immutablesMem);
-        (bool success,) = computedEscrow.call{value: msg.value}("");
-        if (!success) revert IBaseEscrow.NativeTokenSendingFailure();
-
-        // Encode postInteraction call to createSrcEscrow
-        bytes memory postInteractionData = abi.encodeWithSelector(
-            _FACTORY.createSrcEscrow.selector,
-            abi.encode(immutablesMem)
-        );
+        console.log("Resolver: Updated timelocks with deployment timestamp");
         
-        // Combine target address and postInteraction data for LOP args
-        bytes memory lopArgs = abi.encodePacked(address(_FACTORY), postInteractionData);
+        // Log all immutables fields
+        console.log("Resolver: Immutables debug:");
+        console.log("orderHash:", uint256(immutablesMem.orderHash));
+        console.log("hashlock:", uint256(immutablesMem.hashlock));
+        console.log("maker:", uint256(Address.unwrap(immutablesMem.maker)));
+        console.log("taker:", uint256(Address.unwrap(immutablesMem.taker)));
+        console.log("token:", uint256(Address.unwrap(immutablesMem.token)));
+        console.log("amount:", immutablesMem.amount);
+        console.log("safetyDeposit:", immutablesMem.safetyDeposit);
+        console.log("timelocks:", uint256(Timelocks.unwrap(immutablesMem.timelocks)));
+        
+        address computed = _FACTORY.addressOfEscrowSrc(immutablesMem);
+        console.log("Resolver: Computed escrow address:", computed);
+        
+        console.log("Resolver: Sending safety deposit to computed address");
+        (bool success,) = address(computed).call{ value: immutablesMem.safetyDeposit }("");
+        if (!success) {
+            console.log("Resolver: Failed to send safety deposit");
+            revert IBaseEscrow.NativeTokenSendingFailure();
+        }
+        console.log("Resolver: Safety deposit sent successfully");
 
-        // Fill order with postInteraction
-        _LOP.fillOrderArgs(order, r, vs, fillAmount, takerTraits, lopArgs);
-
-        emit SrcEscrowDeployed(immutables.orderHash, computedEscrow, fillAmount, msg.value);
+        // _ARGS_HAS_TARGET = 1 << 251
+        takerTraits = TakerTraits.wrap(TakerTraits.unwrap(takerTraits) | uint256(1 << 251));
+        console.log("Resolver: Updated taker traits with target flag");
+        
+        bytes memory argsMem = abi.encodePacked(computed, args);
+        console.log("Resolver: Encoded args with computed address");
+        
+        console.log("Resolver: Calling LOP fillOrderArgs");
+        _LOP.fillOrderArgs(order, r, vs, amount, takerTraits, argsMem);
+        console.log("Resolver: deploySrc completed successfully");
     }
-
+    
     /**
-     * @notice Deploys destination escrow (mirrors ResolverExample functionality)
-     * @param dstImmutables The immutables for the destination escrow
-     * @param srcCancellationTimestamp The cancellation timestamp from source chain
+     * @notice See {IResolverExample-deployDst}.
      */
-    function deployDst(
-        IBaseEscrow.Immutables calldata dstImmutables, 
-        uint256 srcCancellationTimestamp
-    ) external payable onlyOwner {
+    function deployDst(IBaseEscrow.Immutables calldata dstImmutables, uint256 srcCancellationTimestamp) external onlyOwner payable {
+    
         _FACTORY.createDstEscrow{value: msg.value}(dstImmutables, srcCancellationTimestamp);
     }
 
+    function withdraw(IEscrow escrow, bytes32 secret, IBaseEscrow.Immutables calldata immutables) external {
+
+        escrow.withdraw(secret, immutables);
+    }
+
+    function cancel(IEscrow escrow, IBaseEscrow.Immutables calldata immutables) external {
+    
+        escrow.cancel(immutables);
+    }
+
     /**
-     * @notice Emergency function for arbitrary calls (retained from ResolverExample)
-     * @param targets Array of contract addresses to call
-     * @param arguments Array of calldata for each target
+     * @notice See {IResolverExample-arbitraryCalls}.
      */
-    function arbitraryCalls(
-        address[] calldata targets, 
-        bytes[] calldata arguments
-    ) external onlyOwner {
+    function arbitraryCalls(address[] calldata targets, bytes[] calldata arguments) external onlyOwner {
+    
         uint256 length = targets.length;
-        if (targets.length != arguments.length) revert LengthMismatch();
+        if (targets.length != arguments.length) {
+            revert LengthMismatch();
+        }
         
         for (uint256 i = 0; i < length; ++i) {
+           
+            
             // solhint-disable-next-line avoid-low-level-calls
             (bool success,) = targets[i].call(arguments[i]);
-            if (!success) RevertReasonForwarder.reRevert();
+            if (!success) {
+                RevertReasonForwarder.reRevert();
+            }
         }
     }
 }

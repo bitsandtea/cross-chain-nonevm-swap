@@ -16,6 +16,9 @@ const config: HardhatUserConfig = {
             enabled: true,
             runs: 200,
           },
+          debug: {
+            revertStrings: "default",
+          },
         },
       },
     ],
@@ -30,9 +33,15 @@ const config: HardhatUserConfig = {
       forking: {
         url: `https://mainnet.infura.io/v3/${process.env.INFURA_KEY}`,
       },
-      gasPrice: 100000000000, // 100 gwei
-      blockGasLimit: 30000000,
     },
+    baseSepolia: {
+      chainId: 84532,
+      url: `https://base-sepolia.infura.io/v3/${process.env.INFURA_KEY}`,
+      accounts: [process.env.BASE_S_DEPLOYER_PKEY || ""],
+    },
+  },
+  etherscan: {
+    apiKey: process.env.ETHERSCAN_API_KEY || "",
   },
 };
 

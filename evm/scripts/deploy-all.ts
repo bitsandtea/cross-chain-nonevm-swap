@@ -1,32 +1,38 @@
 import hre from "hardhat";
-import { formatEther } from "viem";
+import { verifyContract } from "./verifyContract";
 
 async function main() {
   console.log("Starting EscrowFactory and Resolver deployment...");
 
-  // Get the deployer account
-  const [deployer] = await hre.viem.getWalletClients();
+  // Get the deployer account using hardhat-ethers
+  const [deployer] = await hre.ethers.getSigners();
 
-  const publicClient = await hre.viem.getPublicClient();
-  const balance = await publicClient.getBalance({
-    address: deployer.account.address,
-  });
-  console.log("Account balance:", formatEther(balance), "ETH");
+  // Get balance using ethers
+  const balance = await deployer.provider.getBalance(deployer.address);
+  console.log("Account balance:", hre.ethers.formatEther(balance), "ETH");
 
   // Deploy tokens
-  console.log("\nDeploying tokens...");
+  // console.log("\nDeploying tokens...");
 
-  const oneInchToken = await hre.viem.deployContract("OneInchToken");
-  console.log("✅ 1INCH Token deployed at:", oneInchToken.address);
+  // const OneInchTokenFactory = await hre.ethers.getContractFactory(
+  //   "OneInchToken"
+  // );
+  // const oneInchToken = await OneInchTokenFactory.deploy();
+  // await oneInchToken.waitForDeployment();
+  // console.log("✅ 1INCH Token deployed at:", await oneInchToken.getAddress());
 
-  const usdc = await hre.viem.deployContract("USDCoin");
-  console.log("✅ USDC deployed at:", usdc.address);
+  // const USDCFactory = await hre.ethers.getContractFactory("USDCoin");
+  // const usdc = await USDCFactory.deploy();
+  // await usdc.waitForDeployment();
+  // console.log("✅ USDC deployed at:", await usdc.getAddress());
 
-  // Constructor parameters for EscrowFactory
-  const limitOrderProtocol = "0x111111125421ca6dc452d289314280a0f8842a65"; // 1inch LOP address
-  const feeToken = oneInchToken.address; // Use 1INCH as fee token
-  const accessToken = oneInchToken.address; // Use 1INCH as access token
-  const owner = deployer.account.address; // Deployer as initial owner
+  // // Constructor parameters for EscrowFactory
+  const limitOrderProtocol = process.env.LOP;
+  const feeToken = "0x513b2f387d4f8c28c536a65ae99b415199803126";
+  const accessToken = "0x64a522c31854f28c4ee67dc24c5344b16bf17bbf";
+  // const feeToken = await oneInchToken.getAddress(); // Use 1INCH as fee token
+  // const accessToken = await oneInchToken.getAddress(); // Use 1INCH as access token
+  const owner = deployer.address; // Deployer as initial owner
   const rescueDelaySrc = 86400; // 1 day in seconds (uint32)
   const rescueDelayDst = 86400; // 1 day in seconds (uint32)
 
@@ -41,7 +47,26 @@ async function main() {
   // Deploy EscrowFactory
   console.log("\nDeploying EscrowFactory...");
 
-  const escrowFactory = await hre.viem.deployContract("EscrowFactory", [
+  // const EscrowFactoryFactory = await hre.ethers.getContractFactory(
+  //   "EscrowFactory"
+  // );
+  // const escrowFactory = await EscrowFactoryFactory.deploy(
+  const escrowFactory = await hre.ethers.deployContract("EscrowFactory", [
+    limitOrderProtocol,
+    feeToken,
+    accessToken,
+    owner,
+    rescueDelaySrc,
+    rescueDelayDst,
+  ]);
+  await escrowFactory.waitForDeployment();
+
+  console.log("✅ EscrowFactory deployed successfully!");
+  console.log("📍 EscrowFactory address:", await escrowFactory.getAddress());
+
+  // Verify EscrowFactory
+  console.log("\nVerifying EscrowFactory...");
+  await verifyContract(await escrowFactory.getAddress(), [
     limitOrderProtocol,
     feeToken,
     accessToken,
@@ -50,14 +75,9 @@ async function main() {
     rescueDelayDst,
   ]);
 
-  console.log("✅ EscrowFactory deployed successfully!");
-  console.log("📍 EscrowFactory address:", escrowFactory.address);
-
   // Get implementation addresses
-  const srcImplementation =
-    await escrowFactory.read.ESCROW_SRC_IMPLEMENTATION();
-  const dstImplementation =
-    await escrowFactory.read.ESCROW_DST_IMPLEMENTATION();
+  const srcImplementation = await escrowFactory.ESCROW_SRC_IMPLEMENTATION();
+  const dstImplementation = await escrowFactory.ESCROW_DST_IMPLEMENTATION();
 
   console.log("📍 EscrowSrc implementation:", srcImplementation);
   console.log("📍 EscrowDst implementation:", dstImplementation);
@@ -65,14 +85,24 @@ async function main() {
   // Deploy Resolver
   console.log("\nDeploying Resolver...");
 
-  const resolver = await hre.viem.deployContract("Resolver", [
-    escrowFactory.address, // Use the deployed factory address
+  const ResolverFactory = await hre.ethers.getContractFactory("Resolver");
+  const resolver = await ResolverFactory.deploy(
+    await escrowFactory.getAddress(), // Use the deployed factory address
     limitOrderProtocol, // Use the same LOP address
-    owner, // Use the same owner
-  ]);
+    owner // Use the same owner
+  );
+  await resolver.waitForDeployment();
 
   console.log("✅ Resolver deployed successfully!");
-  console.log("📍 Resolver address:", resolver.address);
+  console.log("📍 Resolver address:", await resolver.getAddress());
+
+  // Verify Resolver
+  console.log("\nVerifying Resolver...");
+  await verifyContract(await resolver.getAddress(), [
+    await escrowFactory.getAddress(),
+    limitOrderProtocol,
+    owner,
+  ]);
 
   console.log("\nDeployment complete! 🎉");
 
@@ -81,44 +111,44 @@ async function main() {
   console.log("📊 TOKEN BALANCES VERIFICATION");
   console.log("=".repeat(60));
 
-  const oneInchBalance = (await oneInchToken.read.balanceOf([
-    deployer.account.address,
-  ])) as bigint;
-  const usdcBalance = (await usdc.read.balanceOf([
-    deployer.account.address,
-  ])) as bigint;
+  // const oneInchBalance = await oneInchToken.balanceOf(deployer.address);
+  // const usdcBalance = await usdc.balanceOf(deployer.address);
 
-  console.log(
-    `1INCH Balance: ${formatEther(
-      oneInchBalance
-    )} tokens (${oneInchBalance.toString()} wei)`
-  );
-  console.log(
-    `USDC Balance: ${
-      Number(usdcBalance) / 10 ** 6
-    } tokens (${usdcBalance.toString()} wei) - 6 decimals`
-  );
-  console.log("=".repeat(60));
+  // console.log(
+  //   `1INCH Balance: ${hre.ethers.formatEther(
+  //     oneInchBalance
+  //   )} tokens (${oneInchBalance.toString()} wei)`
+  // );
+  // console.log(
+  //   `USDC Balance: ${
+  //     Number(usdcBalance) / 10 ** 6
+  //   } tokens (${usdcBalance.toString()} wei) - 6 decimals`
+  // );
+  // console.log("=".repeat(60));
 
   // Output consolidated .env format for dApp
-  console.log("\n" + "=".repeat(60));
-  console.log("📋 .env VARIABLES FOR YOUR dAPP");
-  console.log("=".repeat(60));
-  console.log(`NEXT_PUBLIC_ONEINCH_TOKEN_ADDRESS=${oneInchToken.address}`);
-  console.log(`NEXT_PUBLIC_USDC_ADDRESS=${usdc.address}`);
-  console.log(`NEXT_PUBLIC_ETH_FACTORY_ADDRESS=${escrowFactory.address}`);
+  // console.log("\n" + "=".repeat(60));
+  // console.log("📋 .env VARIABLES FOR YOUR dAPP");
+  // console.log("=".repeat(60));
+  // console.log(
+  //   `NEXT_PUBLIC_ONEINCH_TOKEN_ADDRESS=${await oneInchToken.getAddress()}`
+  // );
+  // console.log(`NEXT_PUBLIC_USDC_ADDRESS=${await usdc.getAddress()}`);
+  // console.log(
+  //   `NEXT_PUBLIC_ETH_FACTORY_ADDRESS=${await escrowFactory.getAddress()}`
+  // );
   console.log(`NEXT_PUBLIC_ESCROW_SRC_IMPLEMENTATION=${srcImplementation}`);
   console.log(`NEXT_PUBLIC_ESCROW_DST_IMPLEMENTATION=${dstImplementation}`);
-  console.log(`NEXT_PUBLIC_RESOLVER_ADDRESS=${resolver.address}`);
+  console.log(`NEXT_PUBLIC_RESOLVER_ADDRESS=${await resolver.getAddress()}`);
   console.log("=".repeat(60));
 
   return {
-    oneInchToken: oneInchToken.address,
-    usdc: usdc.address,
-    escrowFactory: escrowFactory.address,
+    // oneInchToken: await oneInchToken.getAddress(),
+    // usdc: await usdc.getAddress(),
+    escrowFactory: await escrowFactory.getAddress(),
     escrowSrcImplementation: srcImplementation,
     escrowDstImplementation: dstImplementation,
-    resolver: resolver.address,
+    resolver: await resolver.getAddress(),
   };
 }
 
