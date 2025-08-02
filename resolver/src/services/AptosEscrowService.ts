@@ -1,13 +1,10 @@
 import { Account, Aptos, AptosConfig, Network } from "@aptos-labs/ts-sdk";
 import { OrderExecutionContext, ResolverConfig } from "../types";
-import { createLogger } from "./Logger";
 
 export class AptosEscrowService {
-  private logger = createLogger("AptosEscrowService");
   private config: ResolverConfig;
   private aptosClient: Aptos;
   private aptosAccount: Account;
-
   constructor(config: ResolverConfig, aptosAccount: Account) {
     this.config = config;
     this.aptosAccount = aptosAccount;
@@ -30,30 +27,42 @@ export class AptosEscrowService {
     aptosTakerAsset?: string
   ): Promise<{ txHash: string; address: string }> {
     const { intent, secretHash } = context;
-    const order = intent.fusionOrder;
+    return this.createDestinationEscrowRaw(
+      intent,
+      secretHash,
+      aptosTakerAsset || intent.order.takerAsset,
+      intent.id
+    );
+  }
 
-    // Use the original Aptos asset address if provided, fallback to order.takerAsset
-    const actualTakerAsset = aptosTakerAsset || order.takerAsset;
+  public async createDestinationEscrowRaw(
+    intent: any,
+    secretHash: string,
+    aptosTakerAsset: string,
+    intentId?: string
+  ): Promise<{ txHash: string; address: string }> {
+    // Use the original Aptos asset address if provided, fallback to intent.order.takerAsset
+    const actualTakerAsset = aptosTakerAsset || intent.order.takerAsset;
     const moduleAddress = this.extractAptosModuleAddress(actualTakerAsset);
 
-    this.logger.info("Creating destination escrow on Aptos", {
-      intentId: intent.id,
+    console.log("Creating destination escrow on Aptos", {
+      intentId,
       aptosFactory: this.config.aptosEscrowFactoryAddress,
       originalTakerAsset: actualTakerAsset,
       moduleAddress,
     });
 
     const secretHashBytes = Array.from(Buffer.from(secretHash.slice(2), "hex"));
-    const timelocksArray = this.buildTimelocksArray(order);
+    const timelocksArray = this.buildTimelocksArray(intent);
 
     const payload = {
       function: `${this.config.aptosEscrowFactoryAddress}::escrow::create_escrow`,
       type_arguments: [moduleAddress],
       arguments: [
-        order.dstEscrowTarget,
+        "0x0000000000000000000000000000000000000000", // MISSING: dstEscrowTarget
         this.aptosAccount.accountAddress.toString(),
-        order.takingAmount,
-        order.dstSafetyDeposit,
+        intent.order.takingAmount,
+        "1000000000000000000", // MISSING: dstSafetyDeposit - using default
         secretHashBytes,
         timelocksArray,
         false,
@@ -103,8 +112,8 @@ export class AptosEscrowService {
       );
     }
 
-    this.logger.info("Aptos destination escrow created", {
-      intentId: intent.id,
+    console.log("Aptos destination escrow created", {
+      intentId,
       txHash: result.hash,
       escrowAddress,
     });
@@ -116,8 +125,9 @@ export class AptosEscrowService {
     secret: string,
     intent: any
   ): Promise<{ txHash: string }> {
-    const order = intent.fusionOrder;
-    const moduleAddress = this.extractAptosModuleAddress(order.takerAsset);
+    const moduleAddress = this.extractAptosModuleAddress(
+      intent.order.takerAsset
+    );
     const payload = {
       function: `${this.config.aptosEscrowFactoryAddress}::escrow::withdraw`,
       type_arguments: [moduleAddress],
@@ -125,17 +135,17 @@ export class AptosEscrowService {
         Array.from(Buffer.from(secret.slice(2), "hex")),
         orderHash,
         intent.secretHash,
-        order.dstEscrowTarget,
+        "0x0000000000000000000000000000000000000000", // MISSING: dstEscrowTarget
         this.aptosAccount.accountAddress.toString(),
-        order.takerAsset,
-        order.takingAmount,
-        order.dstSafetyDeposit,
-        this.buildTimelocksArray(order).map((t) => t.toString()),
+        intent.order.takerAsset,
+        intent.order.takingAmount,
+        "1000000000000000000", // MISSING: dstSafetyDeposit
+        this.buildTimelocksArray(intent).map((t) => t.toString()),
       ],
     };
 
     const tx = await this.submitAptosTx(payload);
-    this.logger.info("Destination escrow withdrawn", {
+    console.log("Destination escrow withdrawn", {
       intentId: intent.id,
       txHash: tx.hash,
     });
@@ -145,38 +155,41 @@ export class AptosEscrowService {
   public async cancelDestinationEscrow(
     intent: any
   ): Promise<{ txHash: string }> {
-    const order = intent.fusionOrder;
-    const moduleAddress = this.extractAptosModuleAddress(order.takerAsset);
+    const moduleAddress = this.extractAptosModuleAddress(
+      intent.order.takerAsset
+    );
     const payload = {
       function: `${this.config.aptosEscrowFactoryAddress}::escrow::cancel`,
       type_arguments: [moduleAddress],
       arguments: [
         intent.orderHash,
         intent.secretHash,
-        order.dstEscrowTarget,
+        "0x0000000000000000000000000000000000000000", // MISSING: dstEscrowTarget
         this.aptosAccount.accountAddress.toString(),
-        order.takerAsset,
-        order.takingAmount,
-        order.dstSafetyDeposit,
-        this.buildTimelocksArray(order).map((t) => t.toString()),
+        intent.order.takerAsset,
+        intent.order.takingAmount,
+        "1000000000000000000", // MISSING: dstSafetyDeposit
+        this.buildTimelocksArray(intent).map((t) => t.toString()),
       ],
     };
 
     const tx = await this.submitAptosTx(payload);
-    this.logger.info("Destination escrow cancelled", {
+    console.log("Destination escrow cancelled", {
       intentId: intent.id,
       txHash: tx.hash,
     });
     return { txHash: tx.hash };
   }
 
-  private buildTimelocksArray(order: any): number[] {
+  private buildTimelocksArray(intent: any): number[] {
+    // MISSING: dstTimelock not in new format, using auction timing as fallback
+    const dstTimelock = intent.auctionStartTime + intent.auctionDuration;
     return [
-      order.finalityLock,
-      order.dstTimelock,
-      order.dstTimelock + 3600,
-      order.dstTimelock + 7200,
-      order.dstTimelock + 10800,
+      intent.finalityLock,
+      dstTimelock,
+      dstTimelock + 3600,
+      dstTimelock + 7200,
+      dstTimelock + 10800,
     ];
   }
 

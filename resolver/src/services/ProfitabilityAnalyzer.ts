@@ -5,19 +5,11 @@
  * - Calculate net profit
  */
 
-import axios from "axios";
-import { getMainnetAddress } from "../lib/tokenMapping";
-import { extractErrorMessage, formatEthAmount, retryAsync } from "../lib/utils";
-import {
-  FusionPlusOrder,
-  ProfitabilityAnalysis,
-  ResolverConfig,
-} from "../types";
-import { createLogger } from "./Logger";
+import { extractErrorMessage, formatEthAmount } from "../lib/utils";
+import { Intent, ProfitabilityAnalysis, ResolverConfig } from "../types";
 
 export class ProfitabilityAnalyzer {
   private config: ResolverConfig;
-  private logger = createLogger("ProfitabilityAnalyzer");
 
   constructor(config: ResolverConfig) {
     this.config = config;
@@ -26,23 +18,21 @@ export class ProfitabilityAnalyzer {
   /**
    * Analyze profitability of a Fusion+ order
    */
-  async analyzeProfitability(
-    fusionOrder: FusionPlusOrder
-  ): Promise<ProfitabilityAnalysis> {
+  async analyzeProfitability(intent: Intent): Promise<ProfitabilityAnalysis> {
     // TODO: Re-enable profitability analysis later
     // For now, return true for all trades to test escrow creation flow
 
-    this.logger.info(
-      "Profitability analysis skipped - returning true for all trades",
-      {
-        makerAsset: fusionOrder.makerAsset,
-        takerAsset: fusionOrder.takerAsset,
-        makingAmount: fusionOrder.makingAmount,
-        takingAmount: fusionOrder.takingAmount,
-        srcChain: fusionOrder.srcChain,
-        dstChain: fusionOrder.dstChain,
-      }
-    );
+    // console.log(
+    //   "Profitability analysis skipped - returning true for all trades",
+    //   {
+    //     makerAsset: fusionOrder.makerAsset,
+    //     takerAsset: fusionOrder.takerAsset,
+    //     makingAmount: fusionOrder.makingAmount,
+    //     takingAmount: fusionOrder.takingAmount,
+    //     srcChain: fusionOrder.srcChain,
+    //     dstChain: fusionOrder.dstChain,
+    //   }
+    // );
 
     return {
       profitable: true,
@@ -52,8 +42,8 @@ export class ProfitabilityAnalyzer {
         safetyDeposit: "0.001",
       },
       quote: {
-        fromAmount: fusionOrder.makingAmount,
-        toAmount: fusionOrder.takingAmount,
+        fromAmount: intent.order.makingAmount,
+        toAmount: intent.order.takingAmount,
         price: "1.0",
         protocols: ["fusion-plus"],
       },
@@ -62,7 +52,7 @@ export class ProfitabilityAnalyzer {
 
     /*
     try {
-      this.logger.info("Analyzing profitability for order", {
+      console.log("Analyzing profitability for order", {
         makerAsset: fusionOrder.makerAsset,
         takerAsset: fusionOrder.takerAsset,
         makingAmount: fusionOrder.makingAmount,
@@ -89,7 +79,7 @@ export class ProfitabilityAnalyzer {
 
       const profitable = profit > minProfitThreshold;
 
-      this.logger.info("Profitability analysis complete", {
+      con   ("Profitability analysis complete", {
         expectedOut,
         totalCosts,
         profit,
@@ -108,7 +98,7 @@ export class ProfitabilityAnalyzer {
       };
     } catch (error) {
       const errorMessage = extractErrorMessage(error);
-      this.logger.error("Profitability analysis failed:", errorMessage);
+      console.log("Profitability analysis failed:", errorMessage);
 
       return {
         profitable: false,
@@ -131,20 +121,17 @@ export class ProfitabilityAnalyzer {
 
   /**
    * Fetch quote from 1inch Fusion+ API for cross-chain swaps
-   */
-  private async fetch1inchQuote(fusionOrder: FusionPlusOrder): Promise<{
+   
+  private async fetch1inchQuote(intent: Intent): Promise<{
     fromAmount: string;
     toAmount: string;
     price: string;
     protocols: string[];
   }> {
-    const { dstChain, takerAsset, makerAsset, makingAmount } = fusionOrder;
+    const { dstChain, takerAsset, makerAsset, makingAmount } = intent.order;
 
     // Map testnet addresses to mainnet addresses for Fusion+ API
-    const mainnetMakerAsset = getMainnetAddress(
-      makerAsset,
-      fusionOrder.srcChain
-    );
+    const mainnetMakerAsset = getMainnetAddress(makerAsset, intent.srcChain);
     const mainnetTakerAsset = getMainnetAddress(takerAsset, dstChain);
 
     console.log(`🔧 [ProfitabilityAnalyzer] Fusion+ token mapping:`, {
@@ -152,19 +139,19 @@ export class ProfitabilityAnalyzer {
       mainnetMaker: mainnetMakerAsset,
       originalTaker: takerAsset,
       mainnetTaker: mainnetTakerAsset,
-      srcChain: fusionOrder.srcChain,
+      srcChain: intent.srcChain,
       dstChain,
     });
 
     // Use Fusion+ API for cross-chain quotes
     const url = `${this.config.oneInchApiUrl}/fusion-plus/quoter/v1.0/quote/receive`;
     const params = {
-      srcChain: fusionOrder.srcChain,
+      srcChain: intent.srcChain,
       dstChain: dstChain,
       srcTokenAddress: mainnetMakerAsset,
       dstTokenAddress: mainnetTakerAsset,
       amount: makingAmount,
-      walletAddress: fusionOrder.maker,
+      walletAddress: intent.order.maker,
       enableEstimate: true,
     };
 
@@ -230,26 +217,26 @@ export class ProfitabilityAnalyzer {
       protocols: [], // Fusion+ doesn't provide protocol info in this format
     };
   }
-
+*/
   /**
    * Calculate various costs involved in the trade
    */
-  private async calculateCosts(fusionOrder: FusionPlusOrder): Promise<{
+  private async calculateCosts(intent: Intent): Promise<{
     gasEstimate: string;
     safetyDeposit: string;
     bridgeCosts?: string;
   }> {
     // Estimate gas costs for both chains
-    const evmGasCost = await this.estimateEvmGasCost(fusionOrder);
-    const aptosGasCost = await this.estimateAptosGasCost(fusionOrder);
+    const evmGasCost = await this.estimateEvmGasCost(intent);
+    const aptosGasCost = await this.estimateAptosGasCost(intent);
 
     // Total gas cost (convert to ETH equivalent)
     const totalGasCost = evmGasCost + aptosGasCost;
 
     // Safety deposit (from order)
     const safetyDeposit =
-      parseFloat(formatEthAmount(fusionOrder.srcSafetyDeposit)) +
-      parseFloat(formatEthAmount(fusionOrder.dstSafetyDeposit));
+      parseFloat(formatEthAmount(intent.srcSafetyDeposit)) +
+      parseFloat(formatEthAmount(intent.dstSafetyDeposit));
 
     return {
       gasEstimate: totalGasCost.toString(),
@@ -261,9 +248,7 @@ export class ProfitabilityAnalyzer {
   /**
    * Estimate EVM gas costs
    */
-  private async estimateEvmGasCost(
-    fusionOrder: FusionPlusOrder
-  ): Promise<number> {
+  private async estimateEvmGasCost(intent: Intent): Promise<number> {
     try {
       // Rough estimates based on typical escrow operations
       const escrowCreationGas = 200000; // Creating escrow
@@ -276,7 +261,7 @@ export class ProfitabilityAnalyzer {
 
       const totalCostEth = totalGas * gasPriceEth * this.config.gasBuffer;
 
-      this.logger.debug("EVM gas cost estimate", {
+      console.log("EVM gas cost estimate", {
         totalGas,
         gasPriceGwei,
         totalCostEth,
@@ -284,7 +269,7 @@ export class ProfitabilityAnalyzer {
 
       return totalCostEth;
     } catch (error) {
-      this.logger.warn(
+      console.log(
         "Failed to estimate EVM gas cost, using default:",
         extractErrorMessage(error)
       );
@@ -295,9 +280,7 @@ export class ProfitabilityAnalyzer {
   /**
    * Estimate Aptos gas costs
    */
-  private async estimateAptosGasCost(
-    fusionOrder: FusionPlusOrder
-  ): Promise<number> {
+  private async estimateAptosGasCost(intent: Intent): Promise<number> {
     try {
       // Aptos transactions are typically much cheaper
       const aptGasCost = 0.001; // ~0.001 APT per transaction
@@ -307,7 +290,7 @@ export class ProfitabilityAnalyzer {
       const aptToEthRate = 0.005; // Placeholder rate
       const totalCostEth = aptGasCost * totalTransactions * aptToEthRate;
 
-      this.logger.debug("Aptos gas cost estimate", {
+      console.log("Aptos gas cost estimate", {
         aptGasCost,
         totalTransactions,
         totalCostEth,
@@ -315,7 +298,7 @@ export class ProfitabilityAnalyzer {
 
       return totalCostEth;
     } catch (error) {
-      this.logger.warn(
+      console.log(
         "Failed to estimate Aptos gas cost, using default:",
         extractErrorMessage(error)
       );
@@ -344,7 +327,7 @@ export class ProfitabilityAnalyzer {
         congestion: "low",
       };
     } catch (error) {
-      this.logger.warn(
+      console.log(
         "Failed to check market conditions:",
         extractErrorMessage(error)
       );

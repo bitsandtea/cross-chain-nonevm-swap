@@ -68,7 +68,8 @@ export interface ResolverClaim {
 // New simplified Intent structure (Fusion+ only)
 export interface FusionPlusIntent {
   id: string;
-  order: FusionPlusOrder;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  order: any; // Store the raw SDK order object
   signature: string;
   status:
     | "open" // Phase 1: Order open and available for resolvers
@@ -99,8 +100,11 @@ export interface FusionPlusIntent {
   // New fields for CrossChainOrder support
   orderHash?: string; // Order hash for tracking
   hash?: string; // Secret hash for atomic swaps
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sdkOrder?: any; // Full 1inch SDK CrossChainOrder object
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   extension?: any; // CrossChainOrder extension data
+  sdkOrderEncoded?: string; // Encoded SDK order as single source-of-truth (PassTheOrder.md strategy)
 
   // Escrow and auction fields
   auctionStartTime?: number;
@@ -111,7 +115,14 @@ export interface FusionPlusIntent {
   fillThresholds?: number[];
   expiration?: number;
 
+  // Chain IDs
+  srcChain?: number;
+  dstChain?: number;
+  signedChainId?: number; // The chain ID used when signing the order
+
   // Timelock fields
+  srcTimelock?: number;
+  dstTimelock?: number;
   srcWithdrawal?: number;
   srcPublicWithdrawal?: number;
   srcCancellation?: number;
@@ -121,10 +132,15 @@ export interface FusionPlusIntent {
   dstCancellation?: number;
   srcSafetyDeposit?: string;
   dstSafetyDeposit?: string;
+
+  // Escrow targets
+  srcEscrowTarget?: string;
+  dstEscrowTarget?: string;
 }
 
 export interface FusionPlusIntentRequest {
   fusionOrder: FusionPlusOrder;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sdkOrder: any; // 1inch SDK CrossChainOrder instance
   nonce: number;
   signature: string;

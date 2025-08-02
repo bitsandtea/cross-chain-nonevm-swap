@@ -1,20 +1,19 @@
-import { uint8ArrayToHex, UINT_40_MAX } from "@1inch/byte-utils";
+import { uint8ArrayToHex } from "@1inch/byte-utils";
 import { randomBytes } from "crypto";
 import { ethers } from "ethers";
 import { Intent, ResolverConfig } from "../types";
-import { createLogger } from "./Logger";
 
-// Dynamic import to handle ESM/CommonJS compatibility issues
-let Sdk: any;
-try {
-  Sdk = require("@1inch/cross-chain-sdk");
-} catch (error) {
-  console.error("Failed to import 1inch SDK:", error);
-  throw new Error("1inch SDK not available");
+// Import 1inch SDK with proper types
+const Sdk = require("@1inch/cross-chain-sdk");
+// Import Extension utils from Fusion SDK
+const { Extension } = require("@1inch/fusion-sdk");
+
+// Ensure SDK is properly loaded
+if (!Sdk.HashLock) {
+  throw new Error("SDK.HashLock is not available - check SDK installation");
 }
 
 export class OrderBuilder {
-  private logger = createLogger("OrderBuilder");
   private config: ResolverConfig;
   private evmWallet: ethers.Wallet;
 
@@ -29,182 +28,158 @@ export class OrderBuilder {
     meta?: { aptosTakerAsset?: string; dstChain?: number };
     signature?: string;
   } {
-    const order = intent.fusionOrder;
-    const currentTime = Math.floor(Date.now() / 1000);
-
-    const shouldAllowPartialFills =
-      BigInt(order.makingAmount) > BigInt("1000000000000000000"); // > 1 token
-
+    // Generate secrets for the order (this is needed for withdrawal)
     let secrets: string[] = [];
-    let hashLock: any;
 
-    if (shouldAllowPartialFills) {
-      secrets = Array.from({ length: 11 }).map(() =>
-        uint8ArrayToHex(randomBytes(32))
-      );
-      const leaves = Sdk.HashLock.getMerkleLeaves(secrets);
-      hashLock = Sdk.HashLock.forMultipleFills(leaves);
-    } else {
-      const secret = uint8ArrayToHex(randomBytes(32));
-      secrets = [secret];
-      hashLock = Sdk.HashLock.forSingleFill(secret);
+    // For now, always use single fill
+    const secret = uint8ArrayToHex(randomBytes(32));
+    secrets = [secret];
+    // console.log("Generated secret for withdrawal", {
+    //   secret: secret.slice(0, 10) + "...",
+    //   intentId: intent.id,
+    // });
+
+    // Check if this is a cross-chain order to Aptos
+    // const isCrossChainToAptos = intent.dstChain === 1000;
+    const isCrossChainToAptos = true;
+
+    // console.log("Reconstructing CrossChainOrder from encoded data", {
+    //   intentId: intent.id,
+    //   hasEncodedOrder: !!intent.sdkOrderEncoded,
+    //   signedChainId: intent.signedChainId,
+    //   isCrossChainToAptos,
+    // });
+    // Reconstruct the CrossChainOrder from the encoded data (PassTheOrder.md strategy)
+    if (!intent.sdkOrderEncoded) {
+      throw new Error("No encoded order data found in intent");
     }
 
-    // For cross-chain orders, we need to handle Aptos addresses differently
-    // The 1inch SDK expects EVM addresses, so we use a marker for Aptos assets
-    const isAptosAsset = (address: string, dstChain: number) => {
-      // Check if destination chain is Aptos (chain ID 1000)
-      if (dstChain !== 1000) return false;
+    const orderData = JSON.parse(intent.sdkOrderEncoded);
 
-      // Testnet format: contains "::"
-      if (address.includes("::")) return true;
-
-      // Mainnet format: 32-byte hex (66 chars including 0x)
-      if (address.length === 66 && address.startsWith("0x")) return true;
-
-      return false;
+    // Reconstruct the CrossChainOrder using the exact same pattern as OrderUtils.ts
+    const orderInfo = {
+      makerAsset: Sdk.EvmAddress.fromString(orderData.orderInfo.makerAsset),
+      takerAsset: Sdk.EvmAddress.fromString(orderData.orderInfo.takerAsset),
+      makingAmount: BigInt(orderData.orderInfo.makingAmount),
+      takingAmount: BigInt(orderData.orderInfo.takingAmount),
+      maker: Sdk.EvmAddress.fromString(orderData.orderInfo.maker),
+      receiver: Sdk.EvmAddress.fromString(orderData.orderInfo.receiver),
+      salt: BigInt(orderData.orderInfo.salt),
     };
 
-    const isCrossChainToAptos = isAptosAsset(order.takerAsset, order.dstChain);
-
-    // Use marker address for Aptos assets, original address for EVM assets
-    const takerAssetForSdk = isCrossChainToAptos
-      ? "0x0000000000000000000000000000000000010000" // Marker address for Aptos assets
-      : order.takerAsset;
-
-    // HACK: Use EVM chain ID for SDK call when targeting Aptos
-    // Store real destination chain in meta for downstream services
-    const hackForceEvmDstChain =
-      process.env.HACK_FORCE_EVM_DST_CHAIN === "true";
-    const dstChainIdForSdk =
-      isCrossChainToAptos && hackForceEvmDstChain
-        ? 137 // Force Polygon chain ID for Aptos routes (must be different from srcChain=1)
-        : order.dstChain;
-
-    this.logger.info("Cross-chain order creation", {
-      intentId: intent.id,
-      originalTakerAsset: order.takerAsset,
-      sdkTakerAsset: takerAssetForSdk,
-      isCrossChainToAptos,
-      originalDstChain: order.dstChain,
-      sdkDstChain: dstChainIdForSdk,
-      hackEnabled: hackForceEvmDstChain,
-    });
-
-    // NEW APPROACH: Try to use SDK's API flow instead of manual order creation
-    // This follows the pattern from the example code
-    try {
-      // Check if we have access to the SDK instance for API calls
-      if (typeof Sdk.SDK !== "undefined") {
-        this.logger.info("Attempting to use SDK API flow");
-
-        // Create SDK instance if not available
-        const sdk = new Sdk.SDK({
-          url: "https://api.1inch.dev/fusion-plus",
-          authKey: process.env.ONEINCH_API_KEY || "",
-          blockchainProvider: this.evmWallet,
-        });
-
-        // Use the SDK's getQuote and placeOrder flow
-        const params = {
-          srcChainId: order.srcChain,
-          dstChainId: dstChainIdForSdk,
-          srcTokenAddress: order.makerAsset,
-          dstTokenAddress: takerAssetForSdk,
-          amount: order.makingAmount,
-          enableEstimate: true,
-          walletAddress: order.maker,
-        };
-
-        // For now, fall back to manual creation
-        // TODO: Implement proper SDK API flow
-        this.logger.info(
-          "SDK API flow not yet implemented, using manual creation"
-        );
-      }
-    } catch (error) {
-      this.logger.warn("SDK API flow not available, using manual creation", {
-        error,
-      });
+    // Map Base Sepolia (84532) to Base mainnet (8453) for SDK compatibility
+    let srcChainIdForOrder = orderData.escrowParams.srcChainId;
+    if (srcChainIdForOrder === 84532) {
+      srcChainIdForOrder = 8453; // Base mainnet chain ID supported by SDK
     }
 
-    // MANUAL CREATION (current approach)
-    const crossChainOrder = Sdk.CrossChainOrder.new(
-      new Sdk.Address(this.config.evmEscrowFactoryAddress),
-      {
-        salt: Sdk.randBigInt(1000n),
-        maker: new Sdk.Address(order.maker),
-        makingAmount: BigInt(order.makingAmount),
-        takingAmount: BigInt(order.takingAmount),
-        makerAsset: new Sdk.Address(order.makerAsset),
-        takerAsset: new Sdk.Address(takerAssetForSdk),
-      },
-      {
-        hashLock,
-        timeLocks: Sdk.TimeLocks.new({
-          srcWithdrawal: BigInt(order.finalityLock),
-          srcPublicWithdrawal: BigInt(order.srcTimelock),
-          srcCancellation: BigInt(order.srcTimelock + 3600),
-          srcPublicCancellation: BigInt(order.srcTimelock + 7200),
-          dstWithdrawal: BigInt(order.finalityLock),
-          dstPublicWithdrawal: BigInt(order.dstTimelock),
-          dstCancellation: BigInt(order.dstTimelock + 3600),
-        }),
-        srcChainId: order.srcChain,
-        dstChainId: dstChainIdForSdk,
-        srcSafetyDeposit: BigInt(order.srcSafetyDeposit),
-        dstSafetyDeposit: BigInt(order.dstSafetyDeposit),
-      },
-      {
-        auction: new Sdk.AuctionDetails({
-          initialRateBump: 0,
-          points: [],
-          duration: BigInt(order.auctionDuration || 3600),
-          startTime: BigInt(order.auctionStartTime || currentTime),
-        }),
-        whitelist: [
-          {
-            address: new Sdk.Address(this.evmWallet.address),
-            allowFrom: 0n,
-          },
-        ],
-        resolvingStartTime: 0n,
-      },
-      {
-        nonce: Sdk.randBigInt(Number(UINT_40_MAX)),
-        allowPartialFills: shouldAllowPartialFills,
-        allowMultipleFills: shouldAllowPartialFills,
-      }
-    );
+    const escrowParams = {
+      hashLock: Sdk.HashLock.fromString(orderData.escrowParams.hashLock),
+      srcChainId: srcChainIdForOrder, // Use mapped chain ID for SDK compatibility
+      dstChainId: orderData.escrowParams.dstChainId,
+      srcSafetyDeposit: BigInt(orderData.escrowParams.srcSafetyDeposit),
+      dstSafetyDeposit: BigInt(orderData.escrowParams.dstSafetyDeposit),
+      timeLocks: Sdk.TimeLocks.new({
+        srcWithdrawal: BigInt(orderData.escrowParams.timeLocks.srcWithdrawal),
+        srcPublicWithdrawal: BigInt(
+          orderData.escrowParams.timeLocks.srcPublicWithdrawal
+        ),
+        srcCancellation: BigInt(
+          orderData.escrowParams.timeLocks.srcCancellation
+        ),
+        srcPublicCancellation: BigInt(
+          orderData.escrowParams.timeLocks.srcPublicCancellation
+        ),
+        dstWithdrawal: BigInt(orderData.escrowParams.timeLocks.dstWithdrawal),
+        dstPublicWithdrawal: BigInt(
+          orderData.escrowParams.timeLocks.dstPublicWithdrawal
+        ),
+        dstCancellation: BigInt(
+          orderData.escrowParams.timeLocks.dstCancellation
+        ),
+      }),
+    };
 
-    this.logger.info("Created 1inch CrossChain Order", {
-      intentId: intent.id,
-      orderHash: crossChainOrder.getOrderHash(order.srcChain),
-      allowPartialFills: shouldAllowPartialFills,
-      secretCount: secrets.length,
-    });
+    const details = {
+      auction: new Sdk.AuctionDetails({
+        initialRateBump: Number(orderData.details.auction.initialRateBump),
+        points: orderData.details.auction.points,
+        duration: BigInt(orderData.details.auction.duration),
+        startTime: BigInt(orderData.details.auction.startTime),
+      }),
+      whitelist: orderData.details.whitelist.map((item: any) => ({
+        address: Sdk.EvmAddress.fromString(item.address),
+        allowFrom: BigInt(item.allowFrom),
+      })),
+      resolvingStartTime: BigInt(orderData.details.resolvingStartTime),
+    };
+
+    const extra = {
+      nonce: BigInt(orderData.extra.nonce),
+      allowPartialFills: orderData.extra.allowPartialFills,
+      allowMultipleFills: orderData.extra.allowMultipleFills,
+    };
+
+    let crossChainOrder: any;
+
+    if (intent.extension) {
+      // Reconstruct directly from provided order data + encoded extension bytes
+      const decodedExt = Extension.decode(intent.extension);
+      crossChainOrder = Sdk.EvmCrossChainOrder.fromDataAndExtension(
+        intent.order,
+        decodedExt
+      );
+    } else {
+      // Fallback to reconstruction from the stored constructor params
+      crossChainOrder = Sdk.EvmCrossChainOrder.new(
+        Sdk.EvmAddress.ZERO,
+        orderInfo,
+        escrowParams,
+        details,
+        extra
+      );
+    }
 
     return {
-      order: crossChainOrder,
+      order: crossChainOrder, // Full SDK object with all methods
       secrets,
       meta: isCrossChainToAptos
         ? {
-            aptosTakerAsset: order.takerAsset,
-            dstChain: order.dstChain, // Store real destination chain
+            aptosTakerAsset: orderData.orderInfo.takerAsset,
+            dstChain: intent.dstChain,
           }
         : undefined,
+      signature: intent.signature, // Original signature from maker
     };
   }
 
+  private buildAptosExtension(intent: Intent, order: any): string {
+    // Build NonEvmDstExtension for Aptos chains
+    if (intent.dstChain !== 1000) return "0x"; // Only for Aptos
+
+    // TODO: Replace with Sdk.NonEvmDstExtension.new() when available
+    // For now, return minimal extension bytes
+    const aptosMetadata = {
+      chainId: intent.dstChain,
+      coinType: order.takerAsset,
+      receiver: intent.dstEscrowTarget || order.maker,
+    };
+
+    console.log("Building Aptos extension", aptosMetadata);
+
+    // Return placeholder extension - proper implementation depends on SDK support
+    return "0x01"; // Minimal extension marker
+  }
+
   public calculateFillStrategy(
-    crossChainOrder: any,
+    order: any,
     availableLiquidity: string
   ): {
     fillAmount: bigint;
     secretIndex: number;
     isPartialFill: boolean;
   } {
-    const orderAmount = crossChainOrder.makingAmount;
+    const orderAmount = BigInt(order.makingAmount);
 
     // Handle decimal strings by parsing to float first, then converting to BigInt
     // This handles cases like "10000.0" from BalanceManager
@@ -213,11 +188,8 @@ export class OrderBuilder {
     // Get token decimals dynamically from the order's maker asset
     const { getTokenDecimalsSync } = require("../lib/tokenMapping");
 
-    // Ensure makerAsset is a string (it might be an Address object from 1inch SDK)
-    const makerAssetAddress =
-      typeof crossChainOrder.makerAsset === "string"
-        ? crossChainOrder.makerAsset
-        : crossChainOrder.makerAsset.toString();
+    // Ensure makerAsset is a string
+    const makerAssetAddress = order.makerAsset;
 
     const tokenDecimals = getTokenDecimalsSync(makerAssetAddress) || 18; // Default to 18 if not found
 
@@ -229,19 +201,19 @@ export class OrderBuilder {
     );
     const liquidity = BigInt(liquidityInRawUnits);
 
-    this.logger.info("Fill strategy calculation", {
-      orderAmount: orderAmount.toString(),
-      availableLiquidity,
-      liquidityValue,
-      liquidity: liquidity.toString(),
-    });
+    // console.log("Fill strategy calculation", {
+    //   orderAmount: orderAmount.toString(),
+    //   availableLiquidity,
+    //   liquidityValue,
+    //   liquidity: liquidity.toString(),
+    // });
 
     if (liquidity >= orderAmount) {
-      this.logger.info("Full fill possible - liquidity >= order amount", {
-        liquidity: liquidity.toString(),
-        orderAmount: orderAmount.toString(),
-        fillPercentage: "100",
-      });
+      // console.log("Full fill possible - liquidity >= order amount", {
+      //   liquidity: liquidity.toString(),
+      //   orderAmount: orderAmount.toString(),
+      //   fillPercentage: "100",
+      // });
       return {
         fillAmount: orderAmount,
         secretIndex: 0,
@@ -251,7 +223,7 @@ export class OrderBuilder {
 
     const fillPercentage = (liquidity * 100n) / orderAmount;
 
-    this.logger.info("Fill percentage calculation details", {
+    console.log("Fill percentage calculation details", {
       liquidity: liquidity.toString(),
       orderAmount: orderAmount.toString(),
       fillPercentage: fillPercentage.toString(),
@@ -274,92 +246,18 @@ export class OrderBuilder {
   }
 
   public async signCrossChainOrder(
-    crossChainOrder: any,
+    order: any,
     chainId: bigint
   ): Promise<string> {
     try {
-      const orderHash = crossChainOrder.getOrderHash(chainId);
-      const signature = await this.evmWallet.signMessage(
-        ethers.getBytes(orderHash)
-      );
-
-      this.logger.info("Signed CrossChain Order", {
-        orderHash,
-        signature: signature.slice(0, 10) + "...",
-      });
-
-      return signature;
+      // For now, return placeholder since signing is handled elsewhere
+      console.log("Sign order method called - using existing signature");
+      return "0x";
     } catch (error: any) {
-      this.logger.error("Failed to sign CrossChain Order", {
+      console.log("Failed to sign order", {
         error: error.message,
       });
       throw error;
-    }
-  }
-
-  public convertSignatureToRVS(signature: string): { r: string; vs: string } {
-    try {
-      const sig = ethers.Signature.from(signature);
-      const r = sig.r;
-      const vs = ethers.solidityPacked(
-        ["uint256"],
-        [BigInt(sig.s) | (BigInt(sig.v - 27) << BigInt(255))]
-      );
-      return { r, vs };
-    } catch (error: any) {
-      this.logger.error("Failed to convert signature", {
-        error: error.message,
-        signature,
-      });
-      return {
-        r: ethers.ZeroHash,
-        vs: ethers.ZeroHash,
-      };
-    }
-  }
-
-  // NEW: Try to use SDK's built-in order placement
-  public async trySDKOrderPlacement(intent: Intent): Promise<any> {
-    try {
-      // Check if we can use the SDK's API flow
-      if (typeof Sdk.SDK === "undefined") {
-        this.logger.warn("SDK.SDK not available, cannot use API flow");
-        return null;
-      }
-
-      const order = intent.fusionOrder;
-
-      // Create SDK instance
-      const sdk = new Sdk.SDK({
-        url: "https://api.1inch.dev/fusion-plus",
-        authKey: process.env.ONEINCH_API_KEY || "",
-        blockchainProvider: this.evmWallet,
-      });
-
-      // Use the SDK's getQuote flow
-      const params = {
-        srcChainId: order.srcChain,
-        dstChainId: order.dstChain,
-        srcTokenAddress: order.makerAsset,
-        dstTokenAddress: order.takerAsset,
-        amount: order.makingAmount,
-        enableEstimate: true,
-        walletAddress: order.maker,
-      };
-
-      this.logger.info("Attempting SDK getQuote", { params });
-
-      // This would be the proper way, but requires API key and different flow
-      // const quote = await sdk.getQuote(params);
-      // const orderResponse = await sdk.placeOrder(quote, { ... });
-
-      this.logger.info(
-        "SDK API flow requires different implementation approach"
-      );
-      return null;
-    } catch (error) {
-      this.logger.warn("SDK order placement failed", { error });
-      return null;
     }
   }
 }

@@ -22,7 +22,8 @@
   "license": "MIT",
   "dependencies": {
     "@1inch/byte-utils": "^3.1.0",
-    "@1inch/cross-chain-sdk": "^0.1.15",
+    "@1inch/cross-chain-sdk": "0.2.1-rc.61",
+    "@1inch/limit-order-sdk": "4.9.5-rc.0",
     "@aptos-labs/ts-sdk": "^1.0.0",
     "axios": "^1.6.0",
     "chalk": "^4.1.2",

@@ -182,7 +182,7 @@ export class EscrowWatcher {
       }
 
       // EVM chain verification
-      const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545";
+      const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || "";
       const provider = new ethers.JsonRpcProvider(rpcUrl);
 
       const receipt = await provider.getTransactionReceipt(txHash);

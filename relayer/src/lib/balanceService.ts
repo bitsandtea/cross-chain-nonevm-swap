@@ -88,9 +88,10 @@ export async function getMultipleTokenBalances(
   rpcUrl: string = "http://127.0.0.1:8545"
 ): Promise<Record<string, TokenBalance>> {
   const balances: Record<string, TokenBalance> = {};
-
+  console.log("token addresses", tokenAddresses);
   const balancePromises = tokenAddresses.map(async (tokenAddress) => {
     const balance = await getTokenBalance(userAddress, tokenAddress, rpcUrl);
+    console.log("Here balance", balance);
     if (balance) {
       balances[tokenAddress.toLowerCase()] = balance;
     }

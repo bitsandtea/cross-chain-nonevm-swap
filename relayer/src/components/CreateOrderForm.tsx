@@ -11,7 +11,7 @@ import {
   WifiOff,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import React, { useState } from "react";
 import { toast } from "react-hot-toast";
 
 import { CyberpunkDropdown } from "@/components/ui";
@@ -19,6 +19,7 @@ import { useAllowance, useBalances, usePrices } from "@/hooks";
 import { generateSecret } from "@/lib/crypto";
 import {
   getDefaultFormData,
+  getFormDataWithCurrentNetwork,
   IntentFlowManager,
   validateFormData,
 } from "@/lib/OrderUtils";
@@ -37,6 +38,48 @@ export function CreateOrderForm({
   onOrderCreated,
 }: CreateOrderFormProps) {
   const [formData, setFormData] = useState<FormData>(getDefaultFormData());
+
+  // Initialize form with full default data including current network on mount
+  React.useEffect(() => {
+    const initializeFormData = async () => {
+      const networkFormData = await getFormDataWithCurrentNetwork();
+      setFormData(networkFormData); // Set complete form data, not just chainIn
+    };
+    initializeFormData();
+  }, []); // Run once on mount
+
+  // Update chainIn when account changes or network changes
+  React.useEffect(() => {
+    const updateChainId = async () => {
+      const networkFormData = await getFormDataWithCurrentNetwork();
+      setFormData((prev) => ({
+        ...prev,
+        chainIn: networkFormData.chainIn,
+      }));
+    };
+
+    if (account) {
+      updateChainId();
+    }
+  }, [account]);
+
+  // Listen for network changes and update chainIn
+  React.useEffect(() => {
+    const handleChainChanged = async () => {
+      const networkFormData = await getFormDataWithCurrentNetwork();
+      setFormData((prev) => ({
+        ...prev,
+        chainIn: networkFormData.chainIn,
+      }));
+    };
+
+    if (window.ethereum) {
+      window.ethereum.on("chainChanged", handleChainChanged);
+      return () => {
+        window.ethereum?.removeListener("chainChanged", handleChainChanged);
+      };
+    }
+  }, [account]);
   const { allowanceState, approvalTxHash, loading, currentStep, approveToken } =
     useAllowance(account, formData.sellToken, formData.sellAmount);
   const { userBalances, loading: balancesLoading } = useBalances(

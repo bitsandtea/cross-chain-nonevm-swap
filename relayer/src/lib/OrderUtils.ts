@@ -1,7 +1,6 @@
 import { ethers } from "ethers";
 import { toast } from "react-hot-toast";
 import {
-  ETH_FACTORY_ADDRESS,
   RESOLVER_ADDRESS,
   USDC_ADDRESS,
   USDC_APTOS_ADDRESS,
@@ -9,15 +8,25 @@ import {
 } from "../../config/env";
 import { generateSecrets, storeSecret } from "./crypto";
 
-// Real 1inch SDK imports - using installed packages
 import {
   AuctionDetails,
   EvmCrossChainOrder as CrossChainOrder,
   EvmAddress,
   HashLock,
-  TimeLocks,
   randBigInt,
+  TimeLocks,
 } from "@1inch/cross-chain-sdk";
+
+import { EIP712TypedData } from "@1inch/fusion-sdk";
+
+// Declare window.ethereum for TypeScript
+declare global {
+  interface Window {
+    ethereum?: {
+      request: (args: { method: string; params?: any[] }) => Promise<any>;
+    };
+  }
+}
 
 import { TOKEN_MAPPINGS } from "./tokenMapping";
 import {
@@ -27,7 +36,6 @@ import {
 } from "./tokenUtils";
 
 // Import types from dedicated types folder
-import { UINT_40_MAX } from "@1inch/byte-utils";
 import {
   CrossChainOrderInfo,
   Details,
@@ -36,6 +44,46 @@ import {
   FlowStep,
   FormData,
 } from "../types/flow";
+
+interface BlockchainProviderConnector {
+  signTypedData(
+    walletAddress: string,
+    typedData: EIP712TypedData
+  ): Promise<string>;
+}
+
+interface OrderStruct {
+  maker: string;
+  // ... other order properties
+}
+
+interface Order {
+  getTypedData(srcChainId: number): EIP712TypedData;
+  build(): OrderStruct;
+  // ... other order methods
+}
+
+interface Config {
+  blockchainProvider: BlockchainProviderConnector;
+}
+
+async function signOrder(
+  config: Config,
+  orderStruct: OrderStruct,
+  order: Order,
+  srcChainId: number
+): Promise<string> {
+  if (!config.blockchainProvider) {
+    throw new Error("blockchainProvider has not been set to config");
+  }
+
+  const signature = await config.blockchainProvider.signTypedData(
+    orderStruct.maker,
+    order.getTypedData(srcChainId)
+  );
+
+  return signature;
+}
 
 // Helper function to detect if an address is Aptos-style (non-EVM)
 function isAptosAddress(address: string): boolean {
@@ -68,6 +116,7 @@ function getTokenDecimals(tokenAddress: string): number {
 // Create NonEvmDstExtension for Aptos metadata using 1inch utilities
 function createNonEvmDstExtension(formData: FormData): {
   extensionBytes: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata: any;
 } {
   // Check if this is a cross-chain order to Aptos using improved detection
@@ -220,7 +269,10 @@ export class IntentFlowManager {
       const network = await provider.getNetwork();
       const currentChainId = Number(network.chainId);
 
-      const isCrossChain = formData.chainIn !== formData.chainOut;
+      // Use the actual current network chain ID as source chain
+      const actualSrcChainId = currentChainId;
+
+      const isCrossChain = actualSrcChainId !== formData.chainOut;
 
       if (!isCrossChain) {
         throw new Error(
@@ -233,6 +285,10 @@ export class IntentFlowManager {
           "❌ Secret hash is required for cross-chain orders! Please generate a secret first."
         );
       }
+      //lets generate these once ONLY
+      const UINT_40_MAX = (BigInt(1) << BigInt(40)) - BigInt(1);
+      const salt = randBigInt(UINT_40_MAX);
+      const nonce = randBigInt(UINT_40_MAX);
 
       const {
         order: crossChainOrder,
@@ -244,41 +300,165 @@ export class IntentFlowManager {
       } = await this.buildCrossChainOrder(
         account,
         formData,
-        currentChainId,
-        provider
+        actualSrcChainId, // Use actual source chain ID
+        provider,
+        salt,
+        nonce
       );
 
-      // Get EIP-712 typed data for signing
-      console.log("getting typed data for", currentChainId);
-      const { domain, types, message } =
-        // crossChainOrder.getTypedData(currentChainId);
-        crossChainOrder.getTypedData(1); // TODO: hardcoded ETH Mainnet chain
+      const orderStruct = crossChainOrder.build();
 
-      // Remove EIP712Domain to avoid ambiguity (ethers-v6 requirement)
-      const orderTypes = { Order: types.Order };
+      // Create blockchain provider connector for MetaMask
+      const blockchainProvider: BlockchainProviderConnector = {
+        signTypedData: async (
+          walletAddress: string,
+          typedData: EIP712TypedData
+        ) => {
+          // Check if MetaMask is available
+          if (!window.ethereum) {
+            throw new Error("MetaMask is not installed");
+          }
 
-      console.log("domain", domain);
-      console.log("orderTypes", orderTypes);
-      console.log("message", message);
-      // Sign with EIP-712 typed data
-      const signature = await signer.signTypedData(domain, orderTypes, message);
+          // Request account access if not already connected
+          const accounts = (await window.ethereum.request({
+            method: "eth_requestAccounts",
+          })) as string[];
 
-      // Submit to API with new payload structure including timelock data
+          if (!accounts || accounts.length === 0) {
+            throw new Error("No accounts found");
+          }
+
+          const account = accounts[0];
+
+          // Sign the typed data using MetaMask
+          const signature = (await window.ethereum.request({
+            method: "eth_signTypedData_v4",
+            params: [account, JSON.stringify(typedData)],
+          })) as string;
+
+          return signature;
+        },
+      };
+
+      const config: Config = { blockchainProvider };
+
+      // Use buildOrderTypedData approach instead of order.getTypedData()
+      const { buildOrderTypedData } = await import("@1inch/limit-order-sdk");
+
+      const typedData = buildOrderTypedData(
+        currentChainId,
+        process.env.NEXT_PUBLIC_LOP_ADDRESS || "",
+        "1inch Limit Order Protocol",
+        "4",
+        orderStruct
+      );
+
+      const domainForSignature = {
+        ...typedData.domain,
+        chainId: currentChainId,
+      };
+
+      // Sign using MetaMask with the correct typed data structure
+      const signature = (await window.ethereum.request({
+        method: "eth_signTypedData_v4",
+        params: [
+          account,
+          JSON.stringify({
+            domain: domainForSignature,
+            types: typedData.types,
+            primaryType: "Order",
+            message: typedData.message,
+          }),
+        ],
+      })) as string;
+
+      // Patch the order hash method to ensure consistency
+      (crossChainOrder as any).getOrderHash = (_srcChainId: number) => {
+        return ethers.TypedDataEncoder.hash(
+          domainForSignature,
+          { Order: typedData.types.Order },
+          typedData.message
+        );
+      };
+
+      // Serialize the signed order immediately after signing (Part 1 from PassTheOrder.md)
+      // Store all constructor parameters needed to reconstruct the CrossChainOrder
+      const sdkOrderEncoded = JSON.stringify({
+        factoryAddress: process.env.NEXT_PUBLIC_LOP_ADDRESS || "",
+        orderInfo: {
+          makerAsset: formData.sellToken,
+          takerAsset: ZERO_ADDRESS,
+          makingAmount: ethers
+            .parseUnits(
+              formData.sellAmount,
+              getTokenDecimals(formData.sellToken)
+            )
+            .toString(),
+          takingAmount: ethers
+            .parseUnits(
+              formData.minBuyAmount,
+              getTokenDecimals(formData.buyToken)
+            )
+            .toString(),
+          maker: account,
+          receiver: ZERO_ADDRESS,
+          salt: salt.toString(),
+        },
+        escrowParams: {
+          hashLock: merkleSecrets.merkleRoot,
+          srcChainId: actualSrcChainId, // Use actual current chain ID for storage
+          dstChainId: formData.chainOut === 1000 ? 56 : formData.chainOut, // bsc because the sdk doesn't accept 1000
+          srcSafetyDeposit: escrowParams.srcSafetyDeposit.toString(),
+          dstSafetyDeposit: escrowParams.dstSafetyDeposit.toString(),
+          timeLocks: {
+            srcWithdrawal: timelockValues.srcWithdrawal,
+            srcPublicWithdrawal: timelockValues.srcPublicWithdrawal,
+            srcCancellation: timelockValues.srcCancellation,
+            srcPublicCancellation: timelockValues.srcPublicCancellation,
+            dstWithdrawal: timelockValues.dstWithdrawal,
+            dstPublicWithdrawal: timelockValues.dstPublicWithdrawal,
+            dstCancellation: timelockValues.dstCancellation,
+          },
+        },
+        details: {
+          auction: {
+            initialRateBump: 0,
+            points: [],
+            duration: auctionDuration.toString(),
+            startTime: auctionStartTime.toString(),
+          },
+          whitelist: [
+            {
+              address: RESOLVER_ADDRESS,
+              allowFrom: "0",
+            },
+          ],
+          resolvingStartTime: "0",
+        },
+        extra: {
+          nonce: nonce.toString(),
+          allowPartialFills: true,
+          allowMultipleFills: true,
+        },
+        // Store extension metadata if present
+        // extension: (crossChainOrder as any)._nonEvmExtensionMetadata || null,
+      }); // Single source-of-truth
+      console.log("sdkOrderEncoded", sdkOrderEncoded);
+
+      // Submit to API with complete payload to match current intents.json format
       const requestBody = {
-        order: crossChainOrder.build(),
-        extension: (crossChainOrder as any)._combinedExtensionBytes
-          ? {
-              ...crossChainOrder.extension,
-              _combinedBytes: (crossChainOrder as any)._combinedExtensionBytes,
-              _nonEvmMetadata: (crossChainOrder as any)
-                ._nonEvmExtensionMetadata,
-            }
-          : crossChainOrder.extension,
+        order: {
+          ...crossChainOrder.build(),
+        },
+        extension: crossChainOrder.extension.encode(),
         signature,
+        // Part 2 from PassTheOrder.md: Add encoded order as single source-of-truth
+        sdkOrderEncoded, // JSON string with all constructor parameters for reconstruction
         hash: formData.secretHash,
         // Include chain IDs
-        srcChain: formData.chainIn,
+        srcChain: actualSrcChainId, // Use actual current chain ID
         dstChain: formData.chainOut,
+        signedChainId: currentChainId, // Store the chain ID used for signing
         // Include timelock data from actual values
         srcTimelock: timelockValues.srcPublicWithdrawal,
         dstTimelock: timelockValues.dstPublicWithdrawal,
@@ -292,13 +472,14 @@ export class IntentFlowManager {
         srcSafetyDeposit: escrowParams.srcSafetyDeposit.toString(),
         dstSafetyDeposit: escrowParams.dstSafetyDeposit.toString(),
         // Include escrow targets
-        srcEscrowTarget: account, // Default to maker address
-        dstEscrowTarget: formData.destinationAddress || account, // Use destination or fallback to maker
+        srcEscrowTarget: formData.srcEscrowTarget || account, // Default to maker address
+        dstEscrowTarget: formData.dstEscrowTarget || ZERO_ADDRESS, //todo update when aptos is implemented
         // Include auction data from actual values
         auctionStartTime: Number(auctionStartTime),
-        auctionDuration: Number(auctionDuration),
-        startRate: "1.0",
-        endRate: "1.0",
+        auctionDuration:
+          Number(formData.decayPeriod) || Number(auctionDuration),
+        startRate: formData.startPricePremium || "1.0",
+        endRate: formData.minPriceDiscount || "0.5",
         finalityLock: 300,
         fillThresholds: [25, 50, 75, 100],
         expiration: Number(auctionStartTime) + Number(auctionDuration) + 86400, // auction + 24h
@@ -367,7 +548,9 @@ export class IntentFlowManager {
     account: string,
     formData: FormData,
     srcChainId: number,
-    provider: ethers.Provider
+    provider: ethers.Provider,
+    salt: bigint,
+    nonce: bigint
   ): Promise<{
     order: CrossChainOrder;
     merkleSecrets?: any;
@@ -408,10 +591,6 @@ export class IntentFlowManager {
       formData.minBuyAmount,
       takerTokenDecimals
     );
-    // // Use proper 40-bit random for salt (like working example)
-    // const saltMax = BigInt("0xffffffffff");
-    // const salt = BigInt(Math.floor(Math.random() * Number(saltMax))); // 40-bit max
-    const salt = randBigInt(BigInt(1000));
 
     const orderInfo: CrossChainOrderInfo = {
       makerAsset: EvmAddress.fromString(formData.sellToken),
@@ -433,7 +612,11 @@ export class IntentFlowManager {
     merkleSecrets = generateSecrets(4); // 4 secrets for 25%, 50%, 75%, 100% fills
     secretHash = merkleSecrets.merkleRoot;
 
-    const srcChainIdForOrder = formData.chainIn;
+    // Map Base Sepolia (84532) to Base mainnet (8453) for SDK compatibility
+    let srcChainIdForOrder: number = srcChainId;
+    if (srcChainId === 84532) {
+      srcChainIdForOrder = 8453; // Base mainnet chain ID supported by SDK
+    }
     // isNonEvmChain(formData.chainIn)
     //   ? (56 as NetworkEnum) // Use BSC as placeholder for non-EVM source chains
     //   : (formData.chainIn as NetworkEnum);
@@ -473,14 +656,12 @@ export class IntentFlowManager {
     };
     console.log("escrowParams", escrowParams);
 
+    const AUCTION_DELAY = BigInt(60); // seconds before the auction may start
+    const FILL_LIFETIME = BigInt(3600); // seconds after start when order is still valid
+    const now = BigInt((await provider.getBlock("latest"))?.timestamp || 0);
     // Build auction details
-    // Get current block timestamp using eth call
-    const auctionStartTime = BigInt(
-      (await provider.getBlock("latest"))?.timestamp || 0
-    );
-
-    console.log("auction start time is: ", auctionStartTime);
-    const auctionDuration = BigInt(parseInt(formData.decayPeriod) || 3600);
+    const auctionStartTime = now + AUCTION_DELAY;
+    const auctionDuration = FILL_LIFETIME;
 
     // Validate all values before creating AuctionDetails
     if (!auctionStartTime || !auctionDuration) {
@@ -507,8 +688,6 @@ export class IntentFlowManager {
       resolvingStartTime,
     };
 
-    const nonce = randBigInt(UINT_40_MAX);
-
     const extra: Extra = {
       nonce,
       allowPartialFills: true,
@@ -517,23 +696,25 @@ export class IntentFlowManager {
 
     try {
       // Create NonEvmDstExtension for Aptos metadata if needed
-      const nonEvmExtension = createNonEvmDstExtension(formData);
+      // const nonEvmExtension = createNonEvmDstExtension(formData);
 
       const crossChainOrder = CrossChainOrder.new(
-        EvmAddress.fromString(ETH_FACTORY_ADDRESS),
+        EvmAddress.ZERO,
         orderInfo,
         escrowParams,
         details,
         extra
       );
+      // Disable extension entirely by clearing makerTraits extension flag
+
       console.log("createdCrossChainOrder", JSON.stringify(crossChainOrder));
 
       // Apply NonEvmDstExtension if needed (TODO: use SDK method when available)
-      if (nonEvmExtension.extensionBytes !== "0x") {
-        // Store extension metadata for later use
-        (crossChainOrder as any)._nonEvmExtensionMetadata =
-          nonEvmExtension.metadata;
-      }
+      // if (nonEvmExtension.extensionBytes !== "0x") {
+      //   // Store extension metadata for later use
+      //   (crossChainOrder as any)._nonEvmExtensionMetadata =
+      //     nonEvmExtension.metadata;
+      // }
 
       return {
         order: crossChainOrder,
@@ -635,10 +816,10 @@ export function validateFormData(formData: FormData): {
   return { valid: true };
 }
 
-// Get default form data
-export function getDefaultFormData(): FormData {
+// Get default form data with optional chainIn override
+export function getDefaultFormData(chainIn?: number): FormData {
   return {
-    chainIn: 1, // Ethereum
+    chainIn: chainIn || 84532, // Use provided chainIn or default to Base Sepolia
     chainOut: 1000, // Aptos
     sellToken: USDC_ADDRESS, // USDC on Ethereum
     sellAmount: "1", // Default to 1 USDC
@@ -655,6 +836,27 @@ export function getDefaultFormData(): FormData {
     destinationAddress:
       "0x44689d8f78944f57e1d84bfa1d9f4042d20d7e22c3ec0fe93a05b8035c7712c1",
   };
+}
+
+// Get current network chain ID from MetaMask
+export async function getCurrentChainId(): Promise<number | null> {
+  try {
+    if (!window.ethereum) {
+      return null;
+    }
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const network = await provider.getNetwork();
+    return Number(network.chainId);
+  } catch (error) {
+    console.warn("Failed to get current chain ID:", error);
+    return null;
+  }
+}
+
+// Get form data with current network as chainIn
+export async function getFormDataWithCurrentNetwork(): Promise<FormData> {
+  const currentChainId = await getCurrentChainId();
+  return getDefaultFormData(currentChainId || 84532);
 }
 
 /**

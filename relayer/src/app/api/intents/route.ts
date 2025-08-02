@@ -1,136 +1,16 @@
 import { db, initializeDatabase, saveDatabase } from "@/lib/database";
 import { FusionPlusIntent } from "@/lib/types";
+import { validateFusionPlusOrder } from "@/lib/validation";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 
 // Initialize database
 initializeDatabase();
 
-/*
-// Handle new CrossChainOrder format
-async function handleCrossChainOrder(body: {
-  order: any;
-  extension: any;
-  signature: string;
-  hash: string;
-}) {
-  try {
-    // For new format, we only accept hash (not secret)
-    // The hash should be the secretHash that was used in the order
-    if (
-      !body.hash ||
-      body.hash ===
-        "0x0000000000000000000000000000000000000000000000000000000000000000"
-    ) {
-      return NextResponse.json(
-        { error: "Hash is required for cross-chain orders" },
-        { status: 400 }
-      );
-    }
-
-    // Calculate orderHash from the order (using EIP-712 hash or salt)
-    const orderHash = body.order.salt || `0x${Date.now()}`; // Use salt or generate one
-
-    // Create intent from CrossChainOrder (store as separate format)
-    const intent: FusionPlusIntent = {
-      id: uuidv4(),
-      orderHash: orderHash,
-      // Don't convert to FusionPlusOrder - store CrossChainOrder separately
-      fusionOrder: {
-        // Minimal FusionPlusOrder for compatibility - only required fields
-        maker: body.order.maker,
-        makerAsset: body.order.makerAsset,
-        takerAsset: body.order.takerAsset,
-        makingAmount: body.order.makingAmount,
-        takingAmount: body.order.takingAmount,
-        // Required FusionPlusOrder fields with defaults
-        srcChain: 1, // Default to Ethereum
-        dstChain: 56, // Default to Ethereum (LOP supported)
-        auctionStartTime: Math.floor(Date.now() / 1000),
-        auctionDuration: 3600,
-        startRate: "0",
-        endRate: "0",
-        secretHash: body.hash,
-        srcEscrowTarget: body.order.maker,
-        dstEscrowTarget: body.order.receiver || body.order.maker,
-        srcSafetyDeposit: "100000000000000000",
-        dstSafetyDeposit: "100000000000000000",
-        srcTimelock: 3600,
-        dstTimelock: 1800,
-        finalityLock: 300,
-        fillThresholds: [25, 50, 75, 100],
-        salt: body.order.salt || `0x${Date.now()}`,
-        expiration: Math.floor(Date.now() / 1000) + 86400,
-      },
-      signature: body.signature,
-      status: "open",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      resolverClaims: [],
-      nonce: Date.now(),
-      hash: body.hash,
-      sdkOrder: body.order, // Store the full SDK order
-      extension: body.extension, // Store the extension
-    };
-
-    // Store in database
-    if (!db.data) {
-      db.data = {
-        intents: [],
-        whitelist: [],
-        secrets: [],
-        nonces: {},
-      };
-    }
-
-    db.data.intents.push(intent);
-    await saveDatabase();
-
-    return NextResponse.json({
-      success: true,
-      intentId: intent.id,
-      orderHash: orderHash,
-    });
-  } catch (error) {
-    console.error("Error handling CrossChainOrder:", error);
-    return NextResponse.json(
-      { error: "Failed to process CrossChainOrder" },
-      { status: 500 }
-    );
-  }
-}
-  */
-
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    /*
-      order: {
-    maker: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
-    makerAsset: '0xf0014cbe67b3ab638bdaa2e2cb1b531935829e50',
-    takerAsset: '0xda0000d4000015a526378bb6fafc650cea5966f8',
-    makerTraits: '33471150795161712739625987854704219449736943044941433056043525232457238446080',
-    salt: '323889556686748963939587308947877716729674401837101',
-    makingAmount: '1000000',
-    takingAmount: '1000000',
-    receiver: '0x0000000000000000000000000000000000000000'
-  },
-  extension: {
-    makerAssetSuffix: '0x',
-    takerAssetSuffix: '0x',
-    makingAmountData: '0xdb88cfc18875e3ed6797de31dfaae31f942231f200000000000000688d203e00012c000000',
-    takingAmountData: '0xdb88cfc18875e3ed6797de31dfaae31f942231f200000000000000688d203e00012c000000',
-    predicate: '0x',
-    makerPermit: '0x',
-    preInteraction: '0x',
-    postInteraction: '0xdb88cfc18875e3ed6797de31dfaae31f942231f20000000035b0a1a7be3bdab98e000000087443942c2e21ce558562a6f3a8826d1570f5b6fb403669af7664e8d27eeb2fab000000000000000000000000000000000000000000000000000000000000003800000000000000000000000000000000000000000000000000000000000000000000000000000000002386f26fc100000000000000000000002386f26fc100000000000000000065000000640000000a0000007a00000079000000780000000a',
-    customData: '0x'
-  },
-  signature: '0x88af0e2244f4d3fb69734edbbb9aaf04e8c36337df20f821d9fb428caf946b506a2ab07b70cedf9f88e9f3cd6567ad9a5e8270a7de5a691fc4e273c9559a00a91b',
-  hash: '0xec536170adc9a43efde6c13e4ad0f274eeae745ce508c0d8beb76a3017f5b770'
-}
-  */
     console.log("Post hit with body: ", body);
     if (!body.order || !body.signature || !body.hash) {
       return NextResponse.json(
@@ -149,9 +29,19 @@ export async function POST(req: NextRequest) {
     const fillThresholds = body.fillThresholds || [25, 50, 75, 100];
     const expiration = body.expiration || Math.floor(Date.now() / 1000) + 86400;
 
-    // Extract chain IDs from request body or use defaults
-    const srcChain = body.srcChain || 1; // Default to Ethereum
-    const dstChain = body.dstChain || 1000; // Default to Aptos
+    // Extract chain IDs from request body - don't use hardcoded defaults
+    const srcChain = body.srcChain; // Use actual source chain from request
+    const rawDstChain = body.dstChain || 1000; // Default to Aptos
+    const dstChain = rawDstChain === 1000 ? 56 : rawDstChain; // Use 56 for Aptos as SDK doesn't support it
+    const signedChainId = body.signedChainId || srcChain; // Store the chain ID used for signing
+
+    // Validate that we have the source chain
+    if (!srcChain) {
+      return NextResponse.json(
+        { error: "Source chain ID is required" },
+        { status: 400 }
+      );
+    }
 
     // Extract timelock data from request body or use defaults
     const srcTimelock = body.srcTimelock || 120;
@@ -169,6 +59,48 @@ export async function POST(req: NextRequest) {
     // Extract escrow targets from request body or use defaults
     const srcEscrowTarget = body.srcEscrowTarget || body.order.maker;
     const dstEscrowTarget = body.dstEscrowTarget || body.order.maker;
+
+    // Get the original salt from sdkOrderEncoded (not the padded one from order)
+    let originalSalt = body.order.salt;
+    if (body.sdkOrderEncoded) {
+      try {
+        const encodedOrder = JSON.parse(body.sdkOrderEncoded);
+        originalSalt = encodedOrder.orderInfo.salt;
+      } catch (error) {
+        console.warn("Failed to parse sdkOrderEncoded for salt:", error);
+      }
+    }
+
+    // Validate the reconstructed FusionPlusOrder
+    const fusionOrderToValidate = {
+      makerAsset: body.order.makerAsset,
+      takerAsset: body.order.takerAsset,
+      makingAmount: body.order.makingAmount,
+      takingAmount: body.order.takingAmount,
+      maker: body.order.maker,
+      srcChain: srcChain,
+      dstChain: dstChain,
+      auctionStartTime: auctionStartTime,
+      auctionDuration: auctionDuration,
+      startRate: startRate,
+      endRate: endRate,
+      secretHash: body.hash,
+      srcEscrowTarget: srcEscrowTarget,
+      dstEscrowTarget: dstEscrowTarget,
+      srcTimelock: srcTimelock,
+      dstTimelock: dstTimelock,
+      finalityLock: finalityLock,
+      srcSafetyDeposit: srcSafetyDeposit,
+      dstSafetyDeposit: dstSafetyDeposit,
+      fillThresholds: fillThresholds,
+      salt: originalSalt, // Use the original salt, not the padded one
+      expiration: expiration,
+    };
+
+    const validation = validateFusionPlusOrder(fusionOrderToValidate);
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
 
     // Verify signature and get user address
     // const userAddress = await verifyFusionOrderSignature(
@@ -239,6 +171,7 @@ export async function POST(req: NextRequest) {
       // Add chain IDs
       srcChain,
       dstChain,
+      signedChainId, // Store the chain ID used for signing
       // Add escrow fields to intent
       auctionStartTime,
       auctionDuration,
@@ -262,6 +195,10 @@ export async function POST(req: NextRequest) {
       // Add escrow targets
       srcEscrowTarget,
       dstEscrowTarget,
+      // Store extension data
+      extension: body.extension,
+      // Store encoded SDK order as single source-of-truth (PassTheOrder.md strategy)
+      sdkOrderEncoded: body.sdkOrderEncoded,
     };
 
     // Save to database
@@ -313,22 +250,33 @@ export async function GET(req: NextRequest) {
 
     if (chainIn) {
       const chainInNum = parseInt(chainIn);
-      intents = intents.filter(
-        (intent) => intent.order.srcChain === chainInNum
-      );
+      intents = intents.filter((intent) => intent.srcChain === chainInNum);
     }
 
     if (chainOut) {
       const chainOutNum = parseInt(chainOut);
-      intents = intents.filter(
-        (intent) => intent.order.dstChain === chainOutNum
-      );
+      intents = intents.filter((intent) => intent.dstChain === chainOutNum);
     }
 
     if (user) {
-      intents = intents.filter(
-        (intent) => intent.order.maker.toLowerCase() === user.toLowerCase()
-      );
+      intents = intents.filter((intent) => {
+        // Try to get maker from encoded order data if available
+        if (intent.sdkOrderEncoded) {
+          try {
+            const orderData = JSON.parse(intent.sdkOrderEncoded);
+            return (
+              orderData.orderInfo.maker.toLowerCase() === user.toLowerCase()
+            );
+          } catch (error) {
+            console.warn(
+              "Failed to parse sdkOrderEncoded for user filter:",
+              error
+            );
+            return false;
+          }
+        }
+        return false; // No maker info available
+      });
     }
 
     // Sort by creation time (newest first)
@@ -345,7 +293,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({
-      intents,
+      intents, // Includes sdkOrderEncoded field for each intent
       meta: {
         total: intents.length,
         format: "fusion-plus",

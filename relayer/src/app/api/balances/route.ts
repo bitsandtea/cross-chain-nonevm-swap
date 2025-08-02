@@ -35,7 +35,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Initialize provider (using localhost for development)
-    const provider = new ethers.JsonRpcProvider("http://localhost:8545");
+    const provider = new ethers.JsonRpcProvider(
+      process.env.NEXT_PUBLIC_RPC_URL
+    );
 
     let balance: string;
 

@@ -8,11 +8,9 @@ import { EventEmitter } from "events";
 
 import { extractErrorMessage, retryAsync, sleep } from "../lib/utils";
 import { Intent, ResolverConfig } from "../types";
-import { createLogger } from "./Logger";
 
 export class IntentMonitor extends EventEmitter {
   private config: ResolverConfig;
-  private logger = createLogger("IntentMonitor");
   private isRunning = false;
   private processedIntents = new Set<string>();
   private processedSecrets = new Set<string>();
@@ -28,19 +26,13 @@ export class IntentMonitor extends EventEmitter {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      this.logger.warn("Intent monitor is already running");
       return;
     }
 
     this.isRunning = true;
-    this.logger.info("Starting intent monitor", {
-      relayerUrl: this.config.relayerApiUrl,
-      pollInterval: this.config.pollIntervalMs,
-    });
-
     // Start the polling loop
     this.pollLoop().catch((error) => {
-      this.logger.error("Poll loop error:", extractErrorMessage(error));
+      console.log("Poll loop error:", extractErrorMessage(error));
       this.emit("error", error);
     });
   }
@@ -50,7 +42,6 @@ export class IntentMonitor extends EventEmitter {
    */
   async stop(): Promise<void> {
     this.isRunning = false;
-    this.logger.info("Stopping intent monitor");
   }
 
   /**
@@ -63,7 +54,6 @@ export class IntentMonitor extends EventEmitter {
         await this.pollForSecrets();
         await sleep(this.config.pollIntervalMs);
       } catch (error) {
-        this.logger.error("Error in poll loop:", extractErrorMessage(error));
         await sleep(this.config.pollIntervalMs * 2); // Back off on error
       }
     }
@@ -76,26 +66,56 @@ export class IntentMonitor extends EventEmitter {
     try {
       const intents = await retryAsync(() => this.fetchIntents(), 3, 1000);
 
-      const newIntents = intents.filter(
+      const processableIntents = intents.filter(
         (intent) =>
-          !this.processedIntents.has(intent.id) && intent.status === "pending"
+          intent.status === "pending" ||
+          intent.status === "open" ||
+          intent.status === "processing"
+      );
+
+      const newIntents = processableIntents.filter(
+        (intent) => !this.processedIntents.has(intent.id)
       );
 
       if (newIntents.length > 0) {
-        this.logger.info(`Found ${newIntents.length} new intents`);
+        console.log(`Found ${newIntents.length} new intents`);
 
         for (const intent of newIntents) {
           this.processedIntents.add(intent.id);
           this.emit("newIntent", intent);
         }
+      } else {
+        console.log(
+          `No new intents found. Total intents: ${intents.length}, processable: ${processableIntents.length}, processed: ${this.processedIntents.size}`
+        );
+        if (intents.length > 0) {
+          console.log(
+            "Intent statuses:",
+            intents.map((i) => ({ id: i.id, status: i.status }))
+          );
+
+          // If we have processable intents but they're already processed,
+          // let's clear the cache to allow reprocessing (useful for testing)
+          if (processableIntents.length > 0 && newIntents.length === 0) {
+            const enableAutoReprocess =
+              process.env.ENABLE_AUTO_REPROCESS === "true";
+            if (enableAutoReprocess) {
+              console.log(
+                "🔄 Auto-reprocessing enabled - clearing processed cache"
+              );
+              this.clearProcessedCache();
+            } else {
+              console.log(
+                "ℹ️ Auto-reprocessing disabled. Set ENABLE_AUTO_REPROCESS=true to enable"
+              );
+            }
+          }
+        }
       }
 
       this.lastPollTime = Date.now();
     } catch (error) {
-      this.logger.error(
-        "Failed to poll for intents:",
-        extractErrorMessage(error)
-      );
+      console.log("Failed to poll for intents:", extractErrorMessage(error));
       throw error;
     }
   }
@@ -115,7 +135,22 @@ export class IntentMonitor extends EventEmitter {
         }
       );
 
-      const secrets = response.data.secrets || [];
+      // Handle different response formats
+      let secrets: any[] = [];
+      if (response.data && Array.isArray(response.data)) {
+        secrets = response.data;
+      } else if (response.data && Array.isArray(response.data.secrets)) {
+        secrets = response.data.secrets;
+      } else if (response.data && response.data.secrets) {
+        console.log("Unexpected secrets response format:", response.data);
+        return;
+      } else {
+        // If no secrets found, just return without error
+        console.log("No secrets found in API response");
+        return;
+      }
+
+      console.log(`Secrets API response: ${secrets.length} secrets found`);
 
       for (const secret of secrets) {
         // Skip if already processed
@@ -138,14 +173,11 @@ export class IntentMonitor extends EventEmitter {
         );
 
         // Emit secret shared event
-        this.logger.info(`Secret received for order ${secret.orderHash}`);
+        console.log(`Secret received for order ${secret.orderHash}`);
         this.emit("secretShared", secret);
       }
     } catch (error) {
-      this.logger.error(
-        "Failed to poll for secrets:",
-        extractErrorMessage(error)
-      );
+      console.log("Failed to poll for secrets:", extractErrorMessage(error));
       // Don't throw - secrets polling is non-critical
     }
   }
@@ -192,16 +224,16 @@ export class IntentMonitor extends EventEmitter {
       throw new Error("Invalid intent: missing or invalid id");
     }
 
-    if (typeof i.fusionOrder !== "object" || i.fusionOrder === null) {
-      throw new Error("Invalid intent: missing or invalid fusionOrder");
+    if (typeof i.orderHash !== "string") {
+      throw new Error("Invalid intent: missing or invalid orderHash");
+    }
+
+    if (typeof i.order !== "object" || i.order === null) {
+      throw new Error("Invalid intent: missing or invalid order");
     }
 
     if (typeof i.signature !== "string") {
       throw new Error("Invalid intent: missing or invalid signature");
-    }
-
-    if (typeof i.nonce !== "number") {
-      throw new Error("Invalid intent: missing or invalid nonce");
     }
 
     if (typeof i.status !== "string") {
@@ -210,12 +242,49 @@ export class IntentMonitor extends EventEmitter {
 
     return {
       id: i.id,
-      fusionOrder: i.fusionOrder as any, // Type assertion - validation happens in processor
+      orderHash: i.orderHash,
+      order: i.order as any, // Type assertion - validation happens in processor
       signature: i.signature,
-      nonce: i.nonce,
       status: i.status as any,
       createdAt: typeof i.createdAt === "number" ? i.createdAt : Date.now(),
       updatedAt: typeof i.updatedAt === "number" ? i.updatedAt : Date.now(),
+      resolverClaims: Array.isArray(i.resolverClaims) ? i.resolverClaims : [],
+      secretHash: typeof i.secretHash === "string" ? i.secretHash : "",
+      auctionStartTime:
+        typeof i.auctionStartTime === "number" ? i.auctionStartTime : 0,
+      auctionDuration:
+        typeof i.auctionDuration === "number" ? i.auctionDuration : 0,
+      startRate: typeof i.startRate === "string" ? i.startRate : "1.0",
+      endRate: typeof i.endRate === "string" ? i.endRate : "1.0",
+      finalityLock: typeof i.finalityLock === "number" ? i.finalityLock : 0,
+      fillThresholds: Array.isArray(i.fillThresholds) ? i.fillThresholds : [],
+      expiration: typeof i.expiration === "number" ? i.expiration : 0,
+      srcChain: typeof i.srcChain === "number" ? i.srcChain : 1,
+      dstChain: typeof i.dstChain === "number" ? i.dstChain : 1000,
+      srcTimelock: typeof i.srcTimelock === "number" ? i.srcTimelock : 120,
+      dstTimelock: typeof i.dstTimelock === "number" ? i.dstTimelock : 100,
+      srcSafetyDeposit:
+        typeof i.srcSafetyDeposit === "string"
+          ? i.srcSafetyDeposit
+          : "10000000000000000",
+      dstSafetyDeposit:
+        typeof i.dstSafetyDeposit === "string"
+          ? i.dstSafetyDeposit
+          : "10000000000000000",
+      srcEscrowTarget:
+        typeof i.srcEscrowTarget === "string"
+          ? i.srcEscrowTarget
+          : "0x0000000000000000000000000000000000000000",
+      dstEscrowTarget:
+        typeof i.dstEscrowTarget === "string"
+          ? i.dstEscrowTarget
+          : "0x0000000000000000000000000000000000000000",
+      // Preserve the encoded SDK order data
+      sdkOrderEncoded:
+        typeof i.sdkOrderEncoded === "string" ? i.sdkOrderEncoded : undefined,
+      extension: i.extension,
+      signedChainId:
+        typeof i.signedChainId === "number" ? i.signedChainId : undefined,
     };
   }
 
@@ -245,7 +314,7 @@ export class IntentMonitor extends EventEmitter {
 
       return this.validateIntent(response.data.intent);
     } catch (error) {
-      this.logger.error(
+      console.log(
         `Failed to get intent ${intentId}:`,
         extractErrorMessage(error)
       );
@@ -286,16 +355,35 @@ export class IntentMonitor extends EventEmitter {
               );
             }
           } catch (error: any) {
-            // Check if this is a 400 error with "Invalid status transition" where currentStatus === newStatus
+            // Check if this is a 400 error with "Invalid status transition"
             if (
               error.response?.status === 400 &&
-              error.response?.data?.error === "Invalid status transition" &&
-              error.response?.data?.currentStatus === status
+              error.response?.data?.error === "Invalid status transition"
             ) {
+              const currentStatus = error.response?.data?.currentStatus;
+              const newStatus = error.response?.data?.newStatus;
+
+              // If the current status is already what we want, treat as success
+              if (currentStatus === status) {
+                console.log(
+                  `🔧 [IntentMonitor] Intent ${intentId} already has status '${status}', treating as success`
+                );
+                return; // Exit successfully - no need to update
+              }
+
+              // If the transition is not allowed, log and continue without throwing
               console.log(
-                `🔧 [IntentMonitor] Intent ${intentId} already has status '${status}', treating as success`
+                `⚠️ [IntentMonitor] Invalid status transition for intent ${intentId}: ${currentStatus} -> ${newStatus}. Allowed transitions: ${
+                  error.response?.data?.validTransitions?.join(", ") || "none"
+                }`
               );
-              return; // Exit successfully - no need to update
+
+              // For now, let's continue processing even if status update fails
+              // This allows the resolver to work even if the relayer has strict status rules
+              console.log(
+                `🔄 [IntentMonitor] Continuing to process intent ${intentId} despite status update failure`
+              );
+              return; // Exit successfully - we'll continue processing
             }
 
             // Re-throw other errors for retry logic
@@ -309,7 +397,7 @@ export class IntentMonitor extends EventEmitter {
       console.log(
         `✅ [IntentMonitor] Successfully updated intent ${intentId} status to ${status}`
       );
-      this.logger.debug(`Updated intent ${intentId} status to ${status}`);
+      console.log(`Updated intent ${intentId} status to ${status}`);
     } catch (error) {
       console.log(
         `❌ [IntentMonitor] Failed to update intent ${intentId} status:`,
@@ -322,7 +410,7 @@ export class IntentMonitor extends EventEmitter {
         status: (error as any).response?.status,
       });
 
-      this.logger.error(
+      console.log(
         `Failed to update intent ${intentId} status:`,
         extractErrorMessage(error)
       );
@@ -354,12 +442,15 @@ export class IntentMonitor extends EventEmitter {
    * Clear processed intents and secrets cache (for memory management)
    */
   clearProcessedCache(): void {
-    const oldIntentsSize = this.processedIntents.size;
-    const oldSecretsSize = this.processedSecrets.size;
     this.processedIntents.clear();
     this.processedSecrets.clear();
-    this.logger.info(
-      `Cleared processed cache: ${oldIntentsSize} intents, ${oldSecretsSize} secrets`
-    );
+  }
+
+  /**
+   * Manually trigger processing of an intent (for testing)
+   */
+  async reprocessIntent(intentId: string): Promise<void> {
+    this.processedIntents.delete(intentId);
+    console.log(`🔄 Marked intent ${intentId} for reprocessing`);
   }
 }

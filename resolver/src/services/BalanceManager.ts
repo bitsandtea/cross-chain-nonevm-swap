@@ -14,18 +14,17 @@ import {
   Network,
 } from "@aptos-labs/ts-sdk";
 import { ethers } from "ethers";
+import { ERC20_ABI } from "../abis";
 import {
   extractErrorMessage,
   formatEthAmount,
   parseEthAmount,
   retryAsync,
 } from "../lib/utils";
-import { BalanceCheck, FusionPlusOrder, ResolverConfig } from "../types";
-import { createLogger } from "./Logger";
+import { BalanceCheck, Intent, ResolverConfig } from "../types";
 
 export class BalanceManager {
   private config: ResolverConfig;
-  private logger = createLogger("BalanceManager");
   private evmProvider: ethers.JsonRpcProvider;
   private aptosClient: Aptos;
   private evmWallet: ethers.Wallet;
@@ -45,11 +44,6 @@ export class BalanceManager {
       config.aptosRpcUrl.includes("devnet") ||
       config.aptosRpcUrl.includes("localhost");
 
-    this.logger.info("Initializing Aptos client", {
-      rpcUrl: config.aptosRpcUrl,
-      network: isTestnet ? "TESTNET" : "MAINNET",
-    });
-
     const aptosConfig = new AptosConfig({
       network: isTestnet ? Network.TESTNET : Network.MAINNET,
       fullnode: config.aptosRpcUrl,
@@ -60,23 +54,19 @@ export class BalanceManager {
     // Create Aptos account from private key
     const privateKey = new Ed25519PrivateKey(config.aptosPrivateKey);
     this.aptosAccount = Account.fromPrivateKey({ privateKey });
-
-    this.logger.info("Aptos account initialized", {
-      address: this.aptosAccount.accountAddress.toString(),
-    });
   }
 
   /**
    * Check if resolver has sufficient balance for a Fusion+ order
    */
-  async checkBalances(fusionOrder: FusionPlusOrder): Promise<BalanceCheck> {
+  async checkBalances(intent: Intent): Promise<BalanceCheck> {
     try {
-      this.logger.info("Checking balances for order", {
-        srcChain: fusionOrder.srcChain,
-        dstChain: fusionOrder.dstChain,
-        makingAmount: fusionOrder.makingAmount,
-        takingAmount: fusionOrder.takingAmount,
-      });
+      // console.log("Checking balances for order", {
+      //   srcChain: fusionOrder.srcChain,
+      //   dstChain: fusionOrder.dstChain,
+      //   makingAmount: fusionOrder.makingAmount,
+      //   takingAmount: fusionOrder.takingAmount,
+      // });
 
       // Get current balances
       const [evmBalance, aptosBalance] = await Promise.all([
@@ -85,19 +75,19 @@ export class BalanceManager {
       ]);
 
       // Calculate required balances
-      const requiredBalances = this.calculateRequiredBalances(fusionOrder);
+      const requiredBalances = this.calculateRequiredBalances(intent);
 
       const sufficient =
         parseFloat(evmBalance) >= parseFloat(requiredBalances.evm) &&
         parseFloat(aptosBalance) >= parseFloat(requiredBalances.aptos);
 
-      this.logger.info("Balance check complete", {
-        evmBalance,
-        aptosBalance,
-        requiredEvm: requiredBalances.evm,
-        requiredAptos: requiredBalances.aptos,
-        sufficient,
-      });
+      // console.log("Balance check complete", {
+      //   evmBalance,
+      //   aptosBalance,
+      //   requiredEvm: requiredBalances.evm,
+      //   requiredAptos: requiredBalances.aptos,
+      //   sufficient,
+      // });
 
       return {
         sufficient,
@@ -111,7 +101,7 @@ export class BalanceManager {
       };
     } catch (error) {
       const errorMessage = extractErrorMessage(error);
-      this.logger.error("Balance check failed:", errorMessage);
+      console.log("Balance check failed:", errorMessage);
 
       return {
         sufficient: false,
@@ -139,10 +129,7 @@ export class BalanceManager {
 
       return formatEthAmount(balance.toString());
     } catch (error) {
-      this.logger.error(
-        "Failed to get EVM balance:",
-        extractErrorMessage(error)
-      );
+      console.log("Failed to get EVM balance:", extractErrorMessage(error));
       throw error;
     }
   }
@@ -155,18 +142,10 @@ export class BalanceManager {
       // Get Aptos address from account
       const aptosAddress = this.deriveAptosAddress();
 
-      this.logger.info("Fetching Aptos balance", {
-        address: aptosAddress,
-        rpcUrl: this.config.aptosRpcUrl,
-      });
-
       const balance = await retryAsync(
         async () => {
           const balance = await this.aptosClient.getAccountAPTAmount({
             accountAddress: aptosAddress,
-          });
-          this.logger.debug("APT balance found via SDK", {
-            value: balance.toString(),
           });
           return balance.toString();
         },
@@ -176,18 +155,10 @@ export class BalanceManager {
 
       // APT has 8 decimals
       const formattedBalance = formatEthAmount(balance, 8);
-      this.logger.info("Aptos balance retrieved", {
-        rawBalance: balance,
-        formattedBalance,
-        address: aptosAddress,
-      });
 
       return formattedBalance;
     } catch (error) {
-      this.logger.error(
-        "Failed to get Aptos balance:",
-        extractErrorMessage(error)
-      );
+      console.log("Failed to get Aptos balance:", extractErrorMessage(error));
       throw error;
     }
   }
@@ -195,7 +166,7 @@ export class BalanceManager {
   /**
    * Calculate required balances for both chains
    */
-  private calculateRequiredBalances(fusionOrder: FusionPlusOrder): {
+  private calculateRequiredBalances(intent: Intent): {
     evm: string;
     aptos: string;
   } {
@@ -205,47 +176,47 @@ export class BalanceManager {
 
     // Safety deposits
     const srcSafetyDeposit = parseFloat(
-      formatEthAmount(fusionOrder.srcSafetyDeposit)
+      formatEthAmount(intent.srcSafetyDeposit)
     );
     const dstSafetyDeposit = parseFloat(
-      formatEthAmount(fusionOrder.dstSafetyDeposit)
+      formatEthAmount(intent.dstSafetyDeposit)
     );
 
     // Calculate based on which chain is source/destination
     let evmRequired = evmGasReserve;
     let aptosRequired = aptosGasReserve;
 
-    if (fusionOrder.srcChain === 1) {
+    if (intent.srcChain === 1) {
       // EVM is source chain
       evmRequired += srcSafetyDeposit;
       // Add token amount if it's not ETH
-      if (fusionOrder.makerAsset !== ethers.ZeroAddress) {
+      if (intent.order.makerAsset !== ethers.ZeroAddress) {
         // For ERC-20 tokens, we still need ETH for gas only
         // The token balance is checked separately
       } else {
         // For ETH transfers, add the making amount
-        evmRequired += parseFloat(formatEthAmount(fusionOrder.makingAmount));
+        evmRequired += parseFloat(formatEthAmount(intent.order.makingAmount));
       }
     }
 
-    if (fusionOrder.dstChain === 1) {
+    if (intent.dstChain === 1) {
       // EVM is destination chain
       evmRequired += dstSafetyDeposit;
       // Add token amount for fulfilling the order
-      evmRequired += parseFloat(formatEthAmount(fusionOrder.takingAmount));
+      evmRequired += parseFloat(formatEthAmount(intent.order.takingAmount));
     }
 
-    if (fusionOrder.srcChain === 1000) {
+    if (intent.srcChain === 1000) {
       // Aptos is source chain
       aptosRequired += srcSafetyDeposit;
       // Add token amount (convert from ETH equivalent)
-      aptosRequired += parseFloat(formatEthAmount(fusionOrder.makingAmount));
+      aptosRequired += parseFloat(formatEthAmount(intent.order.makingAmount));
     }
 
-    if (fusionOrder.dstChain === 1000) {
+    if (intent.dstChain === 1000) {
       // Aptos is destination chain
       aptosRequired += dstSafetyDeposit;
-      aptosRequired += parseFloat(formatEthAmount(fusionOrder.takingAmount));
+      aptosRequired += parseFloat(formatEthAmount(intent.order.takingAmount));
     }
 
     return {
@@ -268,7 +239,7 @@ export class BalanceManager {
         return { success: true };
       }
 
-      this.logger.info("Checking token allowance", {
+      console.log("Checking token allowance", {
         token: tokenAddress,
         spender: spenderAddress,
         amount,
@@ -277,10 +248,7 @@ export class BalanceManager {
       // Create token contract
       const tokenContract = new ethers.Contract(
         tokenAddress,
-        [
-          "function allowance(address owner, address spender) view returns (uint256)",
-          "function approve(address spender, uint256 amount) returns (bool)",
-        ],
+        ERC20_ABI,
         this.evmWallet
       );
 
@@ -293,14 +261,14 @@ export class BalanceManager {
       const requiredAmount = parseEthAmount(amount);
 
       if (currentAllowance >= requiredAmount) {
-        this.logger.debug("Sufficient allowance already exists");
+        console.log("Sufficient allowance already exists");
         return { success: true };
       }
 
       // Approve max uint256 for convenience
       const maxUint256 = ethers.MaxUint256;
 
-      this.logger.info("Approving token allowance", {
+      console.log("Approving token allowance", {
         token: tokenAddress,
         spender: spenderAddress,
         amount: maxUint256.toString(),
@@ -309,7 +277,7 @@ export class BalanceManager {
       const tx = await tokenContract.approve(spenderAddress, maxUint256);
       await tx.wait();
 
-      this.logger.info("Token allowance approved", { txHash: tx.hash });
+      console.log("Token allowance approved", { txHash: tx.hash });
 
       return {
         success: true,
@@ -317,7 +285,7 @@ export class BalanceManager {
       };
     } catch (error) {
       const errorMessage = extractErrorMessage(error);
-      this.logger.error("Failed to approve token allowance:", errorMessage);
+      console.log("Failed to approve token allowance:", errorMessage);
 
       return {
         success: false,
@@ -361,7 +329,7 @@ export class BalanceManager {
         },
       };
     } catch (error) {
-      this.logger.error(
+      console.log(
         "Failed to check minimum balances:",
         extractErrorMessage(error)
       );
@@ -378,17 +346,13 @@ export class BalanceManager {
       if (tokenAddress === ethers.ZeroAddress) {
         return await this.getEvmBalance();
       }
-
       const tokenContract = new ethers.Contract(
         tokenAddress,
-        ["function balanceOf(address owner) view returns (uint256)"],
+        ERC20_ABI,
         this.evmProvider
       );
 
-      console.log("checking balance token", tokenAddress);
-      console.log("for user", this.evmWallet.address);
       const balance = await tokenContract.balanceOf(this.evmWallet.address);
-      console.log("balance", balance.toString());
 
       // Get token decimals for proper formatting
       const { getTokenDecimalsSync } = require("../lib/tokenMapping");
@@ -396,19 +360,10 @@ export class BalanceManager {
 
       // Format with correct decimals
       const formattedBalance = ethers.formatUnits(balance, tokenDecimals);
-      console.log(
-        "formatted balance with",
-        tokenDecimals,
-        "decimals:",
-        formattedBalance
-      );
 
       return formattedBalance;
     } catch (error) {
-      this.logger.error(
-        "Failed to get token balance:",
-        extractErrorMessage(error)
-      );
+      console.log("Failed to get token balance:", extractErrorMessage(error));
       throw error;
     }
   }

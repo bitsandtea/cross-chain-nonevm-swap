@@ -1,6 +1,5 @@
 import { ethers } from "ethers";
 import { RPC_URL, ZERO_ADDRESS } from "../../config/env";
-import { isTokenWhitelisted } from "./database";
 import { getTokenInfo as getStaticTokenInfo } from "./tokenMapping";
 import { CANCEL_TYPE, FusionPlusOrder } from "./types";
 
@@ -464,7 +463,7 @@ export function validateFusionPlusOrder(fusionOrder: FusionPlusOrder): {
     }
   }
 
-  if (fusionOrder.dstChain === 1000) {
+  if (fusionOrder.dstChain === 1000 || fusionOrder.dstChain === 56) {
     // Aptos destination chain - validate Aptos address format for dstEscrowTarget
     const dstEscrowValidation = validateAptosUserAddress(
       fusionOrder.dstEscrowTarget
@@ -573,12 +572,45 @@ export function validateFusionPlusOrder(fusionOrder: FusionPlusOrder): {
     };
   }
 
-  // Validate salt format (should be 32 bytes hex)
-  if (!fusionOrder.salt.startsWith("0x") || fusionOrder.salt.length !== 66) {
-    return {
-      valid: false,
-      error: "Invalid salt format (must be 32 bytes hex)",
-    };
+  // Validate salt format:
+  // - Accept 32-byte hex string (0x + 64 hex chars) – used by LOP order structure
+  // - OR accept up to 40-bit unsigned integer when encoded as a decimal/hex number
+  if (
+    typeof fusionOrder.salt === "string" &&
+    fusionOrder.salt.startsWith("0x")
+  ) {
+    // Hex string path
+    if (fusionOrder.salt.length !== 66) {
+      return {
+        valid: false,
+        error: "Salt hex string must be 32 bytes (0x + 64 hex chars)",
+      };
+    }
+    // Additional hex format check
+    if (!/^0x[0-9a-fA-F]{64}$/.test(fusionOrder.salt)) {
+      return {
+        valid: false,
+        error: "Salt contains non-hex characters",
+      };
+    }
+  } else {
+    // Numeric string path (40-bit CrossChainOrder salt)
+    try {
+      console.log("fusionOrder.salt coming as ", fusionOrder.salt);
+      const saltValue = BigInt(fusionOrder.salt);
+      const UINT_40_MAX = (BigInt(1) << BigInt(40)) - BigInt(1);
+      if (saltValue < BigInt(0) || saltValue > UINT_40_MAX) {
+        return {
+          valid: false,
+          error: "Salt must be <= 40-bit when provided as a number",
+        };
+      }
+    } catch (error) {
+      return {
+        valid: false,
+        error: "Invalid salt format (must be hex or decimal string)",
+      };
+    }
   }
 
   // Validate timelock sequence
@@ -661,14 +693,14 @@ export function validateFusionPlusOrder(fusionOrder: FusionPlusOrder): {
     return { valid: false, error: "Expiration must be in the future" };
   }
 
-  // Validate that tokens are whitelisted
-  if (!isTokenWhitelisted(fusionOrder.makerAsset, fusionOrder.srcChain)) {
-    return { valid: false, error: "Maker asset is not whitelisted" };
-  }
+  // // Validate that tokens are whitelisted
+  // if (!isTokenWhitelisted(fusionOrder.makerAsset, fusionOrder.srcChain)) {
+  //   return { valid: false, error: "Maker asset is not whitelisted" };
+  // }
 
-  if (!isTokenWhitelisted(fusionOrder.takerAsset, fusionOrder.dstChain)) {
-    return { valid: false, error: "Taker asset is not whitelisted" };
-  }
+  // if (!isTokenWhitelisted(fusionOrder.takerAsset, fusionOrder.dstChain)) {
+  //   return { valid: false, error: "Taker asset is not whitelisted" };
+  // }
 
   return { valid: true };
 }

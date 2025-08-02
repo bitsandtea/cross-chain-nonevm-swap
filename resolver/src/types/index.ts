@@ -75,14 +75,60 @@ export interface ResolverConfig {
 /**
  * Intent from the relayer API
  */
+export interface SdkOrder {
+  maker: string;
+  makerAsset: string;
+  takerAsset: string;
+  makingAmount: string;
+  takingAmount: string;
+  salt: string;
+  receiver: string;
+  makerTraits: string;
+}
+
 export interface Intent {
   id: string;
-  fusionOrder: FusionPlusOrder;
+  orderHash: string;
+  order: SdkOrder;
   signature: string;
-  nonce: number;
-  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "open"
+    | "processing"
+    | "completed"
+    | "failed"
+    | "cancelled";
   createdAt: number;
   updatedAt: number;
+  resolverClaims: any[];
+  secretHash: string;
+  srcChain: number;
+  dstChain: number;
+  auctionStartTime: number;
+  auctionDuration: number;
+  startRate: string;
+  endRate: string;
+  finalityLock: number;
+  fillThresholds: number[];
+  expiration: number;
+  srcTimelock: number;
+  dstTimelock: number;
+  srcSafetyDeposit: string;
+  dstSafetyDeposit: string;
+  srcEscrowTarget: string;
+  dstEscrowTarget: string;
+  signedChainId?: number; // The chain ID used when signing the order
+  extension?: any; // CrossChainOrder extension data
+  sdkOrderEncoded?: string; // Encoded SDK order as single source-of-truth (PassTheOrder.md strategy)
+
+  // Additional timelock fields
+  srcWithdrawal?: number;
+  srcPublicWithdrawal?: number;
+  srcCancellation?: number;
+  srcPublicCancellation?: number;
+  dstWithdrawal?: number;
+  dstPublicWithdrawal?: number;
+  dstCancellation?: number;
 }
 
 /**
@@ -200,4 +246,29 @@ export interface OrderProcessedEvent {
   };
   processingTime: number;
   error?: string;
+}
+
+/**
+ * Escrow immutables structure matching on-chain format
+ */
+export interface EscrowImmutables {
+  orderHash: string;
+  maker: string;
+  taker: string;
+  token: string;
+  amount: bigint;
+  hashLock: string;
+  safetyDeposit: bigint;
+  timelocks: string; // bytes32 encoded
+}
+
+/**
+ * Secret data from relayer
+ */
+export interface SecretData {
+  orderHash: string;
+  secret: string;
+  intentId: string;
+  action: string;
+  timestamp?: number;
 }

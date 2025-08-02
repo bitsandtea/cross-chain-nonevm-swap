@@ -18,6 +18,7 @@ export function loadResolverConfig(): ResolverConfig {
     "ONEINCH_API_KEY",
     "RELAYER_API_URL",
     "RESOLVER_API_KEY",
+    "OWNER_PKEY",
   ];
 
   // Check for required environment variables
@@ -30,7 +31,9 @@ export function loadResolverConfig(): ResolverConfig {
 
   return {
     // Private keys
-    evmPrivateKey: process.env.RESOLVER_EVM_PRIVATE_KEY!,
+    // evmPrivateKey: process.env.RESOLVER_EVM_PRIVATE_KEY!,
+    // aptosPrivateKey: process.env.RESOLVER_APTOS_PRIVATE_KEY!,
+    evmPrivateKey: process.env.OWNER_PKEY!,
     aptosPrivateKey: process.env.RESOLVER_APTOS_PRIVATE_KEY!,
 
     // Network RPC endpoints
