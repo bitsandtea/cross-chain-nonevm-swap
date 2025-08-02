@@ -21,7 +21,6 @@ export function useBalances(account: string, formData: any) {
     setLoading(true);
     try {
       const balances: UserBalance = {};
-
       if (formData.sellToken) {
         const selectedToken = availableTokens.find(
           (token) => token.address === formData.sellToken

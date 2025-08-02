@@ -33,6 +33,7 @@ export function useIntents() {
 
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
+      console.log("signer is:", signer);
 
       // Create domain
       const domain = {
